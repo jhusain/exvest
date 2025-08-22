@@ -122,7 +122,7 @@ This operation is provided by the brokerage API and may fail.
 
 ### Views
 
-[App View](./App View.png)
+![App View](./App View.png)
 
 The root App View is composed of several views stacked on top of each other:
 
@@ -139,7 +139,7 @@ The App view also overlays a [Settings view](#settings-view) in a floating pop-u
 
 #### Header {#header}
 
-[Header View](./Header View.png)
+![Header View](./Header View.png)
 
 This view allows the user to select an account and security on which to open short positions and shows useful contextual information about both.
 
@@ -153,7 +153,7 @@ This view allows the user to select an account and security on which to open sho
 
 #### Price Axis {#price-axis}
 
-[Price Axis View](./Price Axis View.png) 
+![Price Axis View](./Price Axis View.png) 
 
 This control is responsible for displaying a range of a Price x-axis along its full horizontal width. The range of the Price axis displayed is controlled by the [Price Axis Controller](#price-axis-controller) view. 
 
@@ -208,7 +208,9 @@ Between these views there is a vertical slider which the user can drag to give p
 
 ##### Historical Price Chart {#historical-price-chart}
 
-See the “Historical Price Chart View.png” image for a visual representation of this view. This view is intended to show the price movement of the underlying to better inform the user about which Option orders are more likely to be filled. For example if the price of the underlying is trending down, an investor may attempt to open a short put position with a lower PAS, because it may be more likely there's an investor on the other side of the trade willing to pay a higher premium to hedge against further downside volatility.
+![Historical Price Chart](Historical Price Chart View.png)
+
+This view is intended to show the price movement of the underlying to better inform the user about which Option orders are more likely to be filled. For example if the price of the underlying is trending down, an investor may attempt to open a short put position with a lower PAS, because it may be more likely there's an investor on the other side of the trade willing to pay a higher premium to hedge against further downside volatility.
 
 This view plots historical prices for the underlying with time on the y-axis and prices on the X-axis.  Each point is connected to the previously rendered point by a line.
 
@@ -217,7 +219,7 @@ This view plots historical prices for the underlying with time on the y-axis and
 
 ##### Options List {#options-list}
 
-[Options List View](./Options List View.png)
+![Options List View](./Options List View.png)
 
 This view renders [Option Views](#option-view) for Options associated with the selected underlying security along the following axes:
 
@@ -253,7 +255,7 @@ Initiating a drag operation on an Option view causes the app to attempt to [crea
 
 #### Price Axis Controller {#price-axis-controller}
 
-[Price Axis Controller](./Price Axis Controller.png) 
+![Price Axis Controller](./Price Axis Controller.png) 
 
 This view allows the user to change the range of the price x-axis displayed in the following surrogate views: [Price Axis](#price-axis), [Historical Price Chart](#historical-price-chart), and the [Options List](#options-list). The entire length of the view corresponds to a fixed region of the price axis from $0.00 to 2 × the price of the underlying in the most recent quote received by the view when initially rendered. This range is never updated afterwards, regardless of changes in the underlying price. The view contains a smaller, different outlined Viewport rectangle which corresponds to the visible subset of the fixed axis visible in the surrogate views. Expanding the width of the Viewport view to the left decreases the smallest price value in the range visible in surrogate views, and expanding the width to the right increases the number of views visible in the other views on the right of the price axis. Expanding/contracting the size of the Viewport can be done using the mouse wheel, or by dragging sliders on the left and right edges of the viewport view. In addition to expanding the viewport view, the user can move the viewport view to a different region of the axis while preserving the range size. This can be done by dragging in the viewport and dragging left and right.
 
