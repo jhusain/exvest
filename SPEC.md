@@ -255,7 +255,7 @@ Initiating a drag operation on an Option view causes the app to attempt to [crea
 
 #### Price Axis Controller {#price-axis-controller}
 
-![Price Axis Controller](./price-axis-controller.png) 
+![Price Axis Controller](./price-axis-controller-view.png) 
 
 This view allows the user to change the range of the price x-axis displayed in the following surrogate views: [Price Axis](#price-axis), [Historical Price Chart](#historical-price-chart), and the [Options List](#options-list). The entire length of the view corresponds to a fixed region of the price axis from $0.00 to 2 × the price of the underlying in the most recent quote received by the view when initially rendered. This range is never updated afterwards, regardless of changes in the underlying price. The view contains a smaller, different outlined Viewport rectangle which corresponds to the visible subset of the fixed axis visible in the surrogate views. Expanding the width of the Viewport view to the left decreases the smallest price value in the range visible in surrogate views, and expanding the width to the right increases the number of views visible in the other views on the right of the price axis. Expanding/contracting the size of the Viewport can be done using the mouse wheel, or by dragging sliders on the left and right edges of the viewport view. In addition to expanding the viewport view, the user can move the viewport view to a different region of the axis while preserving the range size. This can be done by dragging in the viewport and dragging left and right.
 
