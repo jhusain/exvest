@@ -122,7 +122,9 @@ This operation is provided by the brokerage API and may fail.
 
 ### Views
 
-See the [App View.png image](https://drive.google.com/open?id=1HCCG2xC-JMCWMYM3a-XTgo38iLCi1vji) for an image of the overall app UI. The root App View is composed of several views stacked on top of each other:
+[App View](./App View.png)
+
+The root App View is composed of several views stacked on top of each other:
 
 1. [Header](#header)  
 2. [Price Axis](#price-axis) Labels  
@@ -137,7 +139,9 @@ The App view also overlays a [Settings view](#settings-view) in a floating pop-u
 
 #### Header {#header}
 
-This view allows the user to select an account and security on which to open short positions and shows useful contextual information about both.  See the “Header View.png” image for a visual representation of the Header View.
+[Header View](./Header View.png)
+
+This view allows the user to select an account and security on which to open short positions and shows useful contextual information about both.
 
 * Fixed-height region pinned at the top of the interface  
 * Displays the following views left to right:    
@@ -149,7 +153,9 @@ This view allows the user to select an account and security on which to open sho
 
 #### Price Axis {#price-axis}
 
-See the “Price Axis View.png” image for a visual representation of this view. This control is responsible for displaying a range of a Price x-axis along its full horizontal width. The range of the Price axis displayed is controlled by the [Price Axis Controller](#price-axis-controller) view. 
+[Price Axis View](./Price Axis View.png) 
+
+This control is responsible for displaying a range of a Price x-axis along its full horizontal width. The range of the Price axis displayed is controlled by the [Price Axis Controller](#price-axis-controller) view. 
 
 This view displays the following visual elements furthest away to closest to the user depth-wise:
 
@@ -211,7 +217,9 @@ This view plots historical prices for the underlying with time on the y-axis and
 
 ##### Options List {#options-list}
 
-See the “Option List View.png” image for a visual representation of this view. This view renders [Option Views](#option-view) for Options associated with the selected underlying security along the following axes:
+[Options List View](./Options List View.png)
+
+This view renders [Option Views](#option-view) for Options associated with the selected underlying security along the following axes:
 
 1. Prices plotted on the x-axis with a visible range controlled by the [Price Axis Controller](#price-axis-controller). The left edge and right edge of an Option View is placed on the x-axis at its Ask and Bid PAS respectively. Note this may mean that some Put Options Views are not visible within the visible range of the Price axis rendered by this view. This view renders all guidelines (including Tag guidelines) in the [Price Axis](#price-axis) and [Historical Price Chart](#historical-price-chart) at the same position along the x-axis, creating the impression of vertically continuity across all these views.   
 2. Discrete list indices plotted on the y-axis, with each index corresponding to a put option in a list filtered and sorted based on user-configured [Options List Settings](#options-list-settings). Put option views must be rendered at least 20 pixels high, and should have at least 10 pixels of margin for a total of 30 pixels of minimum horizontal distance between indices on the y-axis. There are no grid lines along the y-axis.  
@@ -245,7 +253,9 @@ Initiating a drag operation on an Option view causes the app to attempt to [crea
 
 #### Price Axis Controller {#price-axis-controller}
 
-See the “Price Axis Controller View.png” image for a visual representation of this view.This view allows the user to change the range of the price x-axis displayed in the following surrogate views: [Price Axis](#price-axis), [Historical Price Chart](#historical-price-chart), and the [Options List](#options-list). The entire length of the view corresponds to a fixed region of the price axis from $0.00 to 2 × the price of the underlying in the most recent quote received by the view when initially rendered. This range is never updated afterwards, regardless of changes in the underlying price. The view contains a smaller, different outlined Viewport rectangle which corresponds to the visible subset of the fixed axis visible in the surrogate views. Expanding the width of the Viewport view to the left decreases the smallest price value in the range visible in surrogate views, and expanding the width to the right increases the number of views visible in the other views on the right of the price axis. Expanding/contracting the size of the Viewport can be done using the mouse wheel, or by dragging sliders on the left and right edges of the viewport view. In addition to expanding the viewport view, the user can move the viewport view to a different region of the axis while preserving the range size. This can be done by dragging in the viewport and dragging left and right.
+[Price Axis Controller](./Price Axis Controller.png) 
+
+This view allows the user to change the range of the price x-axis displayed in the following surrogate views: [Price Axis](#price-axis), [Historical Price Chart](#historical-price-chart), and the [Options List](#options-list). The entire length of the view corresponds to a fixed region of the price axis from $0.00 to 2 × the price of the underlying in the most recent quote received by the view when initially rendered. This range is never updated afterwards, regardless of changes in the underlying price. The view contains a smaller, different outlined Viewport rectangle which corresponds to the visible subset of the fixed axis visible in the surrogate views. Expanding the width of the Viewport view to the left decreases the smallest price value in the range visible in surrogate views, and expanding the width to the right increases the number of views visible in the other views on the right of the price axis. Expanding/contracting the size of the Viewport can be done using the mouse wheel, or by dragging sliders on the left and right edges of the viewport view. In addition to expanding the viewport view, the user can move the viewport view to a different region of the axis while preserving the range size. This can be done by dragging in the viewport and dragging left and right.
 
 All vertical Tag guidelines are rendered at the appropriate transposed x-position of the Price Axis Controller based on its (expanded) Range. For example if there is a Tag at $50, and the range of values in the Price Axis Controller is 0-200, the Tag guideline should be rendered vertically at 100px. Note that the same Tag guideline may be rendered at a different position in the surrogate views, because their axis range may be different. The Tag guidelines should be visible in the Viewport view as well.
 
