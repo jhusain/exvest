@@ -155,7 +155,7 @@ This view allows the user to select an account and security on which to open sho
 
 ![Price Axis View](./price-axis-view.png) 
 
-This control is responsible for displaying a range of a Price x-axis along its full horizontal width. The range of the Price axis displayed is controlled by the [Price Axis Controller](#price-axis-controller) view. 
+This control is responsible for displaying a range of a Price x-axis along its full horizontal width. The range of the Price axis displayed is controlled by the [Price Axis Controller](#price-axis-controller) view. The height of this control grows to accomodate it's contents.
 
 This view displays the following visual elements furthest away to closest to the user depth-wise:
 
@@ -163,14 +163,15 @@ This view displays the following visual elements furthest away to closest to the
 * Labels on a fixed interval of x-axis guidelines which show the price at that position in the axis. The interval should be large enough to ensure the labels do not overlap. Labels are rendered in the same color as axis guidelines.  
 * [Tags](https://drive.google.com/open?id=0B7zweKma2uL1SGZqaGFtT1gtX0k&resourcekey=0-rhDpf8-A20uWeaRa_NRXdQ) for the prices of the following objects from furthest to closest depth including…  
   * Two [Static tags](#static-tag) showing the Min and Max PAS for the filtered list of options displayed in the [Options List view](#options-list). Each Tag should be in a noticeably brighter color than those used for axis labels/grid lines.  
-  * An [Option rder Tag](#option-order-tag) in [Open mode](#heading=h.2lodx2nevfk6) for each Open Option Order without an associated PCOO, placed at the PAS of the associated Open Option Order.  
-  * An [Option Order Tag](#option-order-tag) in [Provisional Mode](#heading=h.g1rdlo4ts5kp) placed at PAS of the Provisional Option Order.
+  * [Option Order Tags](#option-order-tag) in [Open mode](#heading=h.2lodx2nevfk6) or in [Provisional Mode](#heading=h.g1rdlo4ts5kp) placed at the PAS at their associated Open Order or Provisional Order respectively. Each new [Option Order Tag](#option-order-tag) is rendered closer to the user depth-wise than previously-created ones.
+
+Tags are stacked on top of each other in different rows vertically so they don't obscure each other's contents (except for the Tags showing Min and Max PAS values which are displayed on the same row). At the first row the Min and Max PAS Tags are displayed. In the next row the Tag which displays the current price of the underlying is displayed. Each subsequent rows shows a seperate Open Order Tags in order from earliest-to-latest created.
 
 ##### Tags {#tags}
 
-Like Axis labels, Tags label specific price values have guidelines. However tag labels are rendered in a pennant shape, and their guidelines are twice as thick as the guidelines for labels. 
+Like Axis labels, Tags label specific price values have guidelines. However tag labels are rendered in a rectangle shape, and their guidelines are twice as thick as the guidelines for labels. 
 
-The outline of a Tag’s pennant, its label text, and its guideline should all share the same color. By default, Tags have the same color as the color of guidelines. There are two types of tags: 
+The outline of a Tag’s rectangle, its label text, and its guideline should all share the same color. By default, Tags have the same color as the color of guidelines. There are two types of tags: 
 
 1. Static tag   
 2. Option Order Tag
@@ -204,7 +205,7 @@ The Split view is split into two vertically stacked views.
 1) [Historical price chart](#historical-price-chart)  
 2) [Options List](#options-list) 
 
-Between these views there is a vertical slider which the user can drag to give proportionally more of the available vertical space to one control or another.
+Between these views there is a vertical slider which the user can drag to give a fixed amount of height to the [Options List](#options-list), leaving the rest of the available height to display the [Historical price chart](#historical-price-chart).
 
 ##### Historical Price Chart {#historical-price-chart}
 
