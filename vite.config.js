@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   const isDevBuild = mode === 'development';
   // Work on GitHub Pages under /<repo>/
-  const repo = process.env.GITHUB_REPOSITORY?.split('/').pop();
+  const repo = process.env.GITHUB_REPOSITORY?.split('/').pop() || 'exvest';
   const base = process.env.GITHUB_ACTIONS ? `/${repo}/` : '/';
 
   return {
