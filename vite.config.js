@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
@@ -11,10 +11,16 @@ export default defineConfig(({ mode }) => {
     base,
     plugins: [react()],
     build: {
-      sourcemap: isDevBuild,             // dev build => source maps
+      sourcemap: isDevBuild,                 // dev build => source maps
       outDir: isDevBuild ? 'dist-dev' : 'dist',
       assetsDir: 'assets',
       target: 'es2019',
+
+      // **Key changes below** — make the dev bundle readable in DevTools
+      minify: isDevBuild ? false : 'esbuild',   // no minify for dev build
+      cssMinify: isDevBuild ? false : true,     // readable CSS for dev build
+      esbuild: { keepNames: true },             // keep fn/class names for stack traces
+
       rollupOptions: {
         output: {
           manualChunks: undefined // keep it simple (single bundle per type)
