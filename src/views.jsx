@@ -3,12 +3,12 @@ import { Provider, useDispatch, useSelector } from 'react-redux';
 import './styles.css';
 import {
   store, actions,
-  broker,
   TAG_ROW_H, TAG_HEIGHT, layoutTagsGrouped,
   makeGridlinesPx, makePasToX,
   selectMarket, selectOrders, selectOptionPasBounds, selectFilteredOptions, selectPriceRange,
-  priceColor, clamp
+  priceColor
 } from './logic';
+import { broker, clamp } from './broker';
 
 function useResizeObserver() {
   const ref = useRef(null);
