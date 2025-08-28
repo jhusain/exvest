@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Provider, useDispatch, useSelector } from 'react-redux';
 import './styles.css';
+import { store, actions } from './logic';
 import {
-  store, actions,
   TAG_ROW_H, TAG_HEIGHT, layoutTagsGrouped,
   makeGridlinesPx, makePasToX,
   selectMarket, selectOrders, selectOptionPasBounds, selectFilteredOptions, selectPriceRange,
-  priceColor
-} from './logic';
-import { broker, clamp } from './broker';
+  priceColor, clamp
+} from './util';
+import broker from './broker';
 
 function useResizeObserver() {
   const ref = useRef(null);

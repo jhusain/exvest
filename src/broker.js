@@ -1,6 +1,7 @@
 /** Brokerage logic and mock data utilities */
+import { clamp } from './util';
 
-export function mulberry32(a) {
+function mulberry32(a) {
   return function () {
     let t = (a += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -9,7 +10,7 @@ export function mulberry32(a) {
   };
 }
 
-export class Perlin1D {
+class Perlin1D {
   constructor(seed = 1) {
     this.rand = mulberry32(seed);
     this.grad = [...Array(512)].map(() => this.rand() * 2 - 1);
@@ -30,9 +31,7 @@ export class Perlin1D {
   }
 }
 
-export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-export const mkBroker = (seed = 42) => {
+function mkBroker(seed = 42) {
   const noise = new Perlin1D(seed);
   let t = 0,
     base = 100,
@@ -86,9 +85,9 @@ export const mkBroker = (seed = 42) => {
       return { ok };
     }
   };
-};
+}
 
-export function synthOptions(under, now) {
+function synthOptions(under, now) {
   const commission = 0.75;
   const MIN_PREMIUM_SPREAD = 7;
   const arr = [];
@@ -127,4 +126,6 @@ export function synthOptions(under, now) {
 }
 
 /** expose single broker instance */
-export const broker = mkBroker(1337);
+const broker = mkBroker(1337);
+export default broker;
+

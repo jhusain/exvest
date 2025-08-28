@@ -4,7 +4,7 @@ See the [specification](./SPEC.md) for detailed information on this App, it's UX
 
 This app will eventually be hosted in a Chrome extension which forwards data from the Schwab website to the app, and then forwards commands from the app to Schwab. However at the moment it's hosted in a website which mocks Schwab data to simplify testing.
   
-Split by **logic** (`src/logic.js`) and **views** (`src/views.jsx`). Built with **Vite**, tested with **Vitest**, deployed to **GitHub Pages** via **GitHub Actions**.
+Split by **logic** (`src/logic.js`), **utilities** (`src/util.js`), **broker** (`src/broker.js`), and **views** (`src/views.jsx`). Built with **Vite**, tested with **Vitest**, deployed to **GitHub Pages** via **GitHub Actions**.
 
 ---
 
@@ -104,7 +104,9 @@ Vitest uses the `jsdom` environment for React component testing.
 .github/workflows/ci.yml          # PR tests
 .github/workflows/pages.yml       # Pages deploy (dev bundle)
 public/favicon.svg
-src/logic.js                      # state, selectors, streams, mock broker, helpers
+src/logic.js                      # state slices and store
+src/broker.js                     # mock brokerage
+src/util.js                       # selectors and shared helpers
 src/views.jsx                     # all React components
 src/main.jsx                      # entrypoint
 src/styles.css
@@ -114,7 +116,7 @@ package.json
 vite.config.js
 ```
 
-* **All logic** (actions, models, selectors, fake brokerage, Perlin, utilities) is in `src/logic.js`.
+* **State and actions** live in `src/logic.js`; **mock brokerage** in `src/broker.js`; **selectors and utilities** in `src/util.js`.
 * **All views** are in `src/views.jsx`. The historical chart is SVG; gridlines and PAS layout are memoized via Reselect.
 * **Styles** are in `src/styles.css`.
 
