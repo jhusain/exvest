@@ -1,4 +1,6 @@
 import { configureStore, createSlice } from '@reduxjs/toolkit';
+import { createSelector } from 'reselect';
+import { niceStep } from './util';
 
 const marketSlice = createSlice({
   name: 'market',
@@ -45,5 +47,40 @@ export const actions = {
 
 export const store = configureStore({
   reducer: { market: marketSlice.reducer, orders: ordersSlice.reducer, settings: settingsSlice.reducer }
+});
+
+export const selectMarket = (s) => s.market;
+export const selectOrders = (s) => s.orders;
+export const selectSettings = (s) => s.settings;
+export const selectPriceRange = (s) => s.market.priceRange;
+
+export const selectFilteredOptions = createSelector(
+  [s => s.market.options, selectSettings],
+  (opts, settings) => (opts || []).filter(o => o.probITM >= settings.minProbITM && o.bidSize >= settings.minBidSize)
+);
+
+export const makePasToX = () => createSelector(
+  [selectPriceRange, (_s, width) => Math.max(1, width || 1)],
+  (range, width) => {
+    const span = Math.max(0.01, range.max - range.min);
+    return (pas) => ((pas - range.min) / span) * width;
+  }
+);
+
+export const makeGridlinesPx = () => createSelector(
+  [selectPriceRange, (_s, width) => Math.max(1, width || 1)],
+  (range, width) => {
+    const desiredPx = 90;
+    const step = niceStep(1, (range.max - range.min) / Math.max(1, Math.floor(width / desiredPx)));
+    const start = Math.ceil(range.min / step) * step;
+    const arr = [];
+    for (let v = start; v <= range.max + 1e-6; v += step) arr.push(Math.round(v * 100) / 100);
+    return { values: arr, toPx: (pas) => ((pas - range.min) / (range.max - range.min)) * width, step };
+  }
+);
+
+export const selectOptionPasBounds = createSelector([selectFilteredOptions], (opts) => {
+  if (!opts || !opts.length) return { min: null, max: null };
+  return { min: Math.min(...opts.map(o => o.askPAS)), max: Math.max(...opts.map(o => o.bidPAS)) };
 });
 

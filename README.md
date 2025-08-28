@@ -104,9 +104,9 @@ Vitest uses the `jsdom` environment for React component testing.
 .github/workflows/ci.yml          # PR tests
 .github/workflows/pages.yml       # Pages deploy (dev bundle)
 public/favicon.svg
-src/logic.js                      # state slices and store
+src/logic.js                      # state slices, selectors, and store
 src/broker.js                     # mock brokerage
-src/util.js                       # selectors and shared helpers
+src/util.js                       # shared helpers
 src/views.jsx                     # all React components
 src/main.jsx                      # entrypoint
 src/styles.css
@@ -116,7 +116,7 @@ package.json
 vite.config.js
 ```
 
-* **State and actions** live in `src/logic.js`; **mock brokerage** in `src/broker.js`; **selectors and utilities** in `src/util.js`.
+* **State, actions, and selectors** live in `src/logic.js`; **mock brokerage** in `src/broker.js`; **utilities** in `src/util.js`.
 * **All views** are in `src/views.jsx`. The historical chart is SVG; gridlines and PAS layout are memoized via Reselect.
 * **Styles** are in `src/styles.css`.
 

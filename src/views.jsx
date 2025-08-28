@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Provider, useDispatch, useSelector } from 'react-redux';
 import './styles.css';
-import { store, actions } from './logic';
+import {
+  store, actions,
+  makeGridlinesPx, makePasToX,
+  selectMarket, selectOrders, selectOptionPasBounds, selectFilteredOptions, selectPriceRange
+} from './logic';
 import {
   TAG_ROW_H, TAG_HEIGHT, layoutTagsGrouped,
-  makeGridlinesPx, makePasToX,
-  selectMarket, selectOrders, selectOptionPasBounds, selectFilteredOptions, selectPriceRange,
   priceColor, clamp
 } from './util';
 import broker from './broker';
