@@ -57,11 +57,22 @@ export const commitProvisional = (option) => async (dispatch, getState) => {
   }
 };
 
+// thunk to cancel an open order
+export const cancelOpenOrder = (id) => async (dispatch) => {
+  const res = await broker.cancelOrder(id);
+  if (res?.ok) {
+    dispatch(ordersSlice.actions.removeOpenOrder(id));
+  } else {
+    alert('Cancel failed (mock)');
+  }
+};
+
 export const actions = {
   ...marketSlice.actions,
   ...ordersSlice.actions,
   ...settingsSlice.actions,
-  commitProvisional
+  commitProvisional,
+  cancelOpenOrder
 };
 
 export const store = configureStore({
