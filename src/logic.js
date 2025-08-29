@@ -1,6 +1,6 @@
 import { configureStore, createSlice } from '@reduxjs/toolkit';
 import { createSelector } from 'reselect';
-import { niceStep } from './util';
+import { niceStep, computeAskPas, computeBidPas } from './util';
 import broker from './broker';
 
 const marketSlice = createSlice({
@@ -84,8 +84,17 @@ export const selectOrders = (s) => s.orders;
 export const selectSettings = (s) => s.settings;
 export const selectPriceRange = (s) => s.market.priceRange;
 
+export const selectOptionsWithPas = createSelector(
+  [s => s.market.options, selectOrders],
+  (opts, orders) => (opts || []).map(o => ({
+    ...o,
+    askPAS: computeAskPas(o.strike, o.askPremium, orders.commission),
+    bidPAS: computeBidPas(o.strike, o.bidPremium, orders.commission)
+  }))
+);
+
 export const selectFilteredOptions = createSelector(
-  [s => s.market.options, selectSettings],
+  [selectOptionsWithPas, selectSettings],
   (opts, settings) => (opts || []).filter(o => o.probITM >= settings.minProbITM && o.bidSize >= settings.minBidSize)
 );
 

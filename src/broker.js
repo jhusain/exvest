@@ -88,7 +88,6 @@ function mkBroker(seed = 42) {
 }
 
 function synthOptions(under, now) {
-  const commission = 0.75;
   const MIN_PREMIUM_SPREAD = 7;
   const arr = [];
   const startStrike = Math.ceil(under * 1.01);
@@ -109,17 +108,13 @@ function synthOptions(under, now) {
     const depth = (strike - under) / Math.max(under * 0.01, 0.5);
     const sigmoid = 1 / (1 + Math.exp(-0.6 * depth));
     const probITM = clamp(0.65 + 0.35 * sigmoid + 0.05 * (bidSize / 20), 0.5, 0.995);
-    const askPAS = strike - askPremium + commission;
-    const bidPAS = strike - bidPremium + commission;
     arr.push({
       id: `put-${strike}`,
       strike,
       bidSize,
       probITM: Math.round(probITM * 100),
       askPremium: round2(askPremium),
-      bidPremium: round2(bidPremium),
-      askPAS: round2(askPAS),
-      bidPAS: round2(bidPAS)
+      bidPremium: round2(bidPremium)
     });
   }
   return arr;
