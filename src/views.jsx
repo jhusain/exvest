@@ -196,19 +196,8 @@ function OptionsList() {
       const pas = clamp(getPas(ev.clientX), option.askPAS, option.bidPAS);
       dispatch(actions.setProvisional({ ...p, qty, pas }));
     }
-    function up() { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', up); commit(option); }
+    function up() { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', up); dispatch(actions.commitProvisional(option)); }
     window.addEventListener('mousemove', mm); window.addEventListener('mouseup', up);
-  }
-
-  async function commit(option) {
-    const st = store.getState();
-    const provisional = st.orders.provisional; if (!provisional) return;
-    const premium = Math.round((option.strike + st.orders.commission - provisional.pas) * 100) / 100;
-    const qty = provisional.qty; const pas = provisional.pas;
-    dispatch(actions.clearProvisional());
-    const res = await broker.openOrder({ option: { ...option }, limitPrice: premium, qty });
-    if (res?.ok) dispatch(actions.addOpenOrder({ id: res.orderId, optionId: option.id, qty, limitPrice: premium, pas }));
-    else alert('Order not filled (simulated). Try closer to bid or higher bid size.');
   }
 
   const price = useSelector(s => selectMarket(s).price);
