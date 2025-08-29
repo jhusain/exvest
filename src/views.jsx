@@ -89,12 +89,6 @@ function PriceAxis({ onHeight, axisH }) {
   const prov = useSelector(s => selectOrders(s).provisional);
   const openOrders = useSelector(s => selectOrders(s).openOrders);
 
-  async function cancel(id) {
-    const res = await broker.cancelOrder(id);
-    if (res?.ok) dispatch(actions.removeOpenOrder(id));
-    else alert('Cancel failed (mock)');
-  }
-
   const group0 = [];
   if (bounds.min != null) group0.push({ key: 'min', x: pas2x(bounds.min), text: `$${bounds.min}`, color: 'white' });
   if (bounds.max != null) group0.push({ key: 'max', x: pas2x(bounds.max), text: `$${bounds.max}`, color: 'white' });
@@ -102,7 +96,7 @@ function PriceAxis({ onHeight, axisH }) {
   const group1 = [{ key: 'm', x: pas2x(price), text: `$${price.toFixed(2)}`, color: pClr }];
 
   const group2 = [];
-  openOrders.forEach(o => group2.push({ key: 'o-' + o.id, x: pas2x(o.pas), text: `${o.qty} × $${o.pas.toFixed(2)}`, color: 'yellow', onTrash: () => cancel(o.id) }));
+  openOrders.forEach(o => group2.push({ key: 'o-' + o.id, x: pas2x(o.pas), text: `${o.qty} × $${o.pas.toFixed(2)}`, color: 'yellow', onTrash: () => dispatch(actions.cancelOpenOrder(o.id)) }));
   if (prov) group2.push({ key: 'p', x: pas2x(prov.pas), text: `${prov.qty} × $${prov.pas.toFixed(2)}`, color: 'blue' });
 
   const { placed: tags, totalRows } = layoutTagsGrouped([group0, group1, group2], width);
