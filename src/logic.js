@@ -1,6 +1,7 @@
 import { configureStore, createSlice } from '@reduxjs/toolkit';
 import { createSelector } from 'reselect';
 import { niceStep } from './util';
+import broker from './broker';
 
 const marketSlice = createSlice({
   name: 'market',
@@ -39,10 +40,28 @@ const settingsSlice = createSlice({
   reducers: {}
 });
 
+// thunk to finalize a provisional order and track it as open
+export const commitProvisional = (option) => async (dispatch, getState) => {
+  const st = getState();
+  const provisional = st.orders.provisional;
+  if (!provisional) return;
+  const premium = Math.round((option.strike + st.orders.commission - provisional.pas) * 100) / 100;
+  const qty = provisional.qty;
+  const pas = provisional.pas;
+  dispatch(ordersSlice.actions.clearProvisional());
+  const res = await broker.openOrder({ option: { ...option }, limitPrice: premium, qty });
+  if (res?.ok) {
+    dispatch(ordersSlice.actions.addOpenOrder({ id: res.orderId, optionId: option.id, qty, limitPrice: premium, pas }));
+  } else {
+    alert('Order not filled (simulated). Try closer to bid or higher bid size.');
+  }
+};
+
 export const actions = {
   ...marketSlice.actions,
   ...ordersSlice.actions,
-  ...settingsSlice.actions
+  ...settingsSlice.actions,
+  commitProvisional
 };
 
 export const store = configureStore({
