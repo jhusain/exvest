@@ -174,12 +174,13 @@ function OptionsList() {
     e.preventDefault();
     const rect = ref.current.getBoundingClientRect();
     const startY = e.clientY; const startQty = 1;
+    const { askPAS, bidPAS } = option;
     const getPas = (clientX) => {
       const localX = clientX - rect.left;
       const s = store.getState(); const r = selectPriceRange(s); const span = r.max - r.min;
       return Math.round((r.min + (localX / Math.max(1, width)) * span) * 100) / 100;
     };
-    const startPas = clamp(getPas(e.clientX), option.askPAS, option.bidPAS);
+    const startPas = clamp(getPas(e.clientX), askPAS, bidPAS);
     const p = { id: `prov-${Date.now()}`, optionId: option.id, limitPrice: option.askPremium, pas: startPas, qty: startQty, strike: option.strike };
     dispatch(actions.setProvisional(p));
 
@@ -187,7 +188,7 @@ function OptionsList() {
       const dy = ev.clientY - startY;
       const deltaQty = Math.floor(-dy / (height * 0.05));
       const qty = Math.max(1, startQty + deltaQty);
-      const pas = clamp(getPas(ev.clientX), option.askPAS, option.bidPAS);
+      const pas = clamp(getPas(ev.clientX), askPAS, bidPAS);
       dispatch(actions.setProvisional({ ...p, qty, pas }));
     }
     function up() { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', up); dispatch(actions.commitProvisional(option)); }

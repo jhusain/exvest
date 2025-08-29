@@ -1,5 +1,11 @@
 export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+export const computeAskPas = (strike, askPremium, commission) =>
+  Math.round((strike - askPremium + commission) * 100) / 100;
+
+export const computeBidPas = (strike, bidPremium, commission) =>
+  Math.round((strike - bidPremium + commission) * 100) / 100;
+
 export const TAG_ROW_H = 24;
 export const TAG_TOP_PAD = 6;
 export const TAG_HEIGHT = 22;
