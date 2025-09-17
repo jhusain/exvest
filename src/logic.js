@@ -23,6 +23,16 @@ const marketSlice = createSlice({
   }
 });
 
+const ORDER_FIELDS = ['status', 'quantity', 'commission', 'limit'];
+
+const applyOrderFields = (target, update) => {
+  for (const field of ORDER_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(update, field)) {
+      target[field] = update[field];
+    }
+  }
+};
+
 const ordersSlice = createSlice({
   name: 'orders',
   initialState: { commission: 0.75, availableCash: 100000, openOrders: [], provisional: null },
@@ -30,7 +40,26 @@ const ordersSlice = createSlice({
     setProvisional(s, a) { s.provisional = a.payload; },
     clearProvisional(s) { s.provisional = null; },
     addOpenOrder(s, a) { s.openOrders.push(a.payload); },
-    removeOpenOrder(s, a) { s.openOrders = s.openOrders.filter(o => o.id !== a.payload); }
+    removeOpenOrder(s, a) { s.openOrders = s.openOrders.filter(o => o.id !== a.payload); },
+    mergeOrders(s, a) {
+      const updates = Array.isArray(a.payload) ? a.payload : [];
+      if (!updates.length) return;
+
+      const byId = new Map(s.openOrders.map(order => [order.id, order]));
+
+      for (const upd of updates) {
+        if (!upd || upd.id === undefined || upd.id === null) continue;
+        const existing = byId.get(upd.id);
+        if (existing) {
+          applyOrderFields(existing, upd);
+        } else {
+          const newOrder = { id: upd.id };
+          applyOrderFields(newOrder, upd);
+          s.openOrders.push(newOrder);
+          byId.set(newOrder.id, newOrder);
+        }
+      }
+    }
   }
 });
 
@@ -74,6 +103,8 @@ export const actions = {
   commitProvisional,
   cancelOpenOrder
 };
+
+export const ordersReducer = ordersSlice.reducer;
 
 export const store = configureStore({
   reducer: { market: marketSlice.reducer, orders: ordersSlice.reducer, settings: settingsSlice.reducer }
