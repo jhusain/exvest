@@ -3,16 +3,33 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build:dev": "vite build --mode development",
     "build:prod": "vite build --mode production",
     "preview:dev": "vite preview --outDir dist-dev --host 0.0.0.0",
     "preview:prod": "vite preview --host 0.0.0.0",
-    "test": "vitest"
+    "test": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "electron:dev": "ELECTRON=1 vite",
+    "electron:build": "ELECTRON=1 vite build --mode production && electron-builder --publish=never",
+    "electron:live": "ELECTRON=1 vite build --mode production && electron . --live",
+    "electron:live-noconfirm": "ELECTRON=1 vite build --mode production && electron . --live-noconfirm"
+  },
+  "build": {
+    "appId": "com.exvest.app",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    }
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
+    "@stoqey/ib": "^1.6.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-redux": "^8.1.3",
@@ -21,9 +38,16 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.2",
     "@testing-library/react": "^14.2.1",
+    "@types/node": "^26.1.2",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "jsdom": "^24.0.0",
+    "typescript": "^7.0.2",
     "vite": "^5.4.2",
+    "vite-plugin-electron": "^0.29.1",
     "vitest": "^1.6.0"
   }
 }

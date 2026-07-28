@@ -1,16 +1,16 @@
-export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+export const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
-export const computeAskPas = (strike, askPremium, commission) =>
+export const computeAskPas = (strike: number, askPremium: number, commission: number): number =>
   Math.round((strike - askPremium + commission) * 100) / 100;
 
-export const computeBidPas = (strike, bidPremium, commission) =>
+export const computeBidPas = (strike: number, bidPremium: number, commission: number): number =>
   Math.round((strike - bidPremium + commission) * 100) / 100;
 
 export const TAG_ROW_H = 24;
 export const TAG_TOP_PAD = 6;
 export const TAG_HEIGHT = 22;
 
-export function niceStep(_pxPerTick, approx) {
+export function niceStep(_pxPerTick: number, approx: number): number {
   const steps = [1, 2, 5];
   let n = Math.pow(10, Math.floor(Math.log10(Math.max(approx, 1e-6))));
   let best = steps[0] * n,
@@ -28,20 +28,33 @@ export function niceStep(_pxPerTick, approx) {
   return Math.max(best, 0.01);
 }
 
-export function priceColor(curr, prev) {
+export function priceColor(curr: number, prev: number | null): 'white' | 'green' | 'red' {
   if (prev == null || curr === prev) return 'white';
   return curr > prev ? 'green' : 'red';
 }
 
-export function estimateTagWidth(text) {
+export function estimateTagWidth(text: string): number {
   const len = String(text || '').length;
   return Math.max(48, 12 + len * 8 + 12);
 }
 
-export function layoutTags(tags, width) {
+export interface TagInput {
+  key: string;
+  x: number;
+  text: string;
+  color: string;
+  onTrash?: () => void;
+}
+
+export interface PlacedTag extends TagInput {
+  top: number;
+  row: number;
+}
+
+export function layoutTags(tags: TagInput[], _width: number): PlacedTag[] {
   const ordered = tags.slice().sort((a, b) => a.x - b.x);
-  const rowEnds = [];
-  const placed = [];
+  const rowEnds: number[] = [];
+  const placed: PlacedTag[] = [];
   for (const t of ordered) {
     const w = estimateTagWidth(t.text);
     const left = t.x - w / 2;
@@ -58,8 +71,8 @@ export function layoutTags(tags, width) {
   return placed;
 }
 
-export function layoutTagsGrouped(groups, width) {
-  const all = [];
+export function layoutTagsGrouped(groups: TagInput[][], width: number): { placed: PlacedTag[]; totalRows: number } {
+  const all: PlacedTag[] = [];
   let base = 0;
   let totalRows = 0;
   for (const g of groups) {
@@ -75,4 +88,3 @@ export function layoutTagsGrouped(groups, width) {
   }
   return { placed: all, totalRows };
 }
-

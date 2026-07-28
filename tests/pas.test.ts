@@ -1,17 +1,23 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { store, actions, selectFilteredOptions, selectOptionPasBounds } from '../src/logic';
+import type { OptionQuote } from '../src/shared/types';
 
 describe('PAS computation', () => {
   it('derives PAS values when missing from broker data', () => {
-    const option = {
+    const option: OptionQuote = {
       id: 'put-101',
+      conId: 1,
       strike: 101,
+      expiry: '20260101',
       bidSize: 10,
+      askSize: 10,
       probITM: 90,
       askPremium: 7,
-      bidPremium: 6.5
+      bidPremium: 6.5,
+      time: 0
     };
-    store.dispatch(actions.streamUpdate({ price: 100, now: 0, options: [option] }));
+    store.dispatch(actions.underlyingTick({ price: 100, time: 0 }));
+    store.dispatch(actions.optionQuotes([option]));
     const opts = selectFilteredOptions(store.getState());
     expect(opts).toHaveLength(1);
     const computed = opts[0];
@@ -25,5 +31,5 @@ describe('PAS computation', () => {
 });
 
 afterEach(() => {
-  store.dispatch(actions.streamUpdate({ price: 100, now: 0, options: [] }));
+  store.dispatch(actions.optionQuotes([]));
 });
