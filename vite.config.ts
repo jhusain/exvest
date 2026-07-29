@@ -26,7 +26,9 @@ export default defineConfig(({ mode }) => {
           entry: 'electron/main.ts',
           vite: {
             build: {
-              lib: { entry: 'electron/main.ts', formats: ['cjs'], fileName: () => '[name].cjs' }
+              rollupOptions: {
+                output: { format: 'cjs', entryFileNames: '[name].cjs' }
+              }
             }
           }
         },
