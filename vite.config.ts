@@ -12,9 +12,24 @@ export default defineConfig(({ mode }) => {
   // `vite build` used by the web/GitHub Pages target never bundles Node/IB code.
   const plugins: PluginOption[] = [react()];
   if (process.env.ELECTRON) {
+    // package.json has "type": "module", so vite-plugin-electron's default
+    // lib-mode build emits ESM for the main entry (`.js`, loaded by Node as
+    // a module) — that breaks @stoqey/ib's CommonJS dependency chain (raw
+    // __dirname/require references). Force main's lib build to CJS under a
+    // `.cjs` extension so Node loads it as CommonJS regardless of
+    // "type": "module". Electron's preload loader is unaffected by
+    // "type": "module" (it always requires the script as CJS internally),
+    // so the plugin's default preload config is left as-is.
     plugins.push(
       electron({
-        main: { entry: 'electron/main.ts' },
+        main: {
+          entry: 'electron/main.ts',
+          vite: {
+            build: {
+              lib: { entry: 'electron/main.ts', formats: ['cjs'], fileName: () => '[name].cjs' }
+            }
+          }
+        },
         preload: { input: 'electron/preload.ts' }
       })
     );

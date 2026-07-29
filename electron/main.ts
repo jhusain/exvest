@@ -1,11 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { IbBrokerAdapter } from '../src/broker/IbBrokerAdapter';
 import { modeFromArgv, defaultIbPort } from '../src/shared/modes';
 import type { ConnectionInfo, TradingMode } from '../src/shared/types';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // EXVEST_MODE lets `npm run electron:dev` (which can't pass CLI flags through
 // to the auto-spawned dev Electron process) select a mode for local testing;
