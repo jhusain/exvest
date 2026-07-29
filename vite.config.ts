@@ -26,8 +26,22 @@ export default defineConfig(({ mode }) => {
           entry: 'electron/main.ts',
           vite: {
             build: {
+              // `build.lib` must be switched off, not overridden: the plugin
+              // defaults it to `formats: ['es']`, and Vite's mergeConfig
+              // *concatenates* arrays, so a `formats: ['cjs']` override yields
+              // `['es', 'cjs']` — two builds writing the same filename, the ESM
+              // one landing last. With lib disabled, Vite honours
+              // rollupOptions.output.format and the plugin falls back to
+              // rollupOptions.input for the entry.
+              lib: false,
               rollupOptions: {
-                output: { format: 'cjs', entryFileNames: '[name].cjs' }
+                input: 'electron/main.ts',
+                output: {
+                  format: 'cjs',
+                  entryFileNames: '[name].cjs',
+                  chunkFileNames: '[name].cjs',
+                  inlineDynamicImports: true
+                }
               }
             }
           }

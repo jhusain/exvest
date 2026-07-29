@@ -13,6 +13,7 @@
     "test": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "electron:dev": "ELECTRON=1 vite",
+    "electron:start": "ELECTRON=1 vite build --mode production && electron .",
     "electron:build": "ELECTRON=1 vite build --mode production && electron-builder --publish=never",
     "electron:live": "ELECTRON=1 vite build --mode production && electron . --live",
     "electron:live-noconfirm": "ELECTRON=1 vite build --mode production && electron . --live-noconfirm"
