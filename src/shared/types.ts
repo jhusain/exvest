@@ -10,6 +10,10 @@
  * which uses Node sockets and only ever runs in the Electron main process.
  */
 
+import type { TradingSession } from './marketClock';
+
+export type { TradingSession };
+
 export type TradingMode = 'sim-client' | 'ib-paper' | 'ib-live-confirm' | 'ib-live';
 
 export interface OptionContract {
@@ -94,6 +98,14 @@ export interface SetUnderlyingResult {
   conId: number;
   expiry: string; // YYYYMMDD
   expiryIsToday: boolean;
+  /**
+   * Trading sessions for this contract as absolute epoch-ms ranges, taken
+   * from the broker's own schedule where available (IB's ContractDetails
+   * liquidHours). Empty when the broker cannot supply one — e.g. the
+   * simulator, or IB with "Expose entire trading schedule to API" disabled —
+   * in which case the UI falls back to assuming a regular 09:30-16:00 ET day.
+   */
+  sessions: TradingSession[];
 }
 
 export interface PlaceOrderRequest {

@@ -19,6 +19,7 @@ import {
 } from '@stoqey/ib';
 import { TypedEmitter } from '../shared/emitter';
 import { createLogger, isIbWarningCode } from '../shared/log';
+import { parseIbTradingHours } from '../shared/marketClock';
 import type {
   AccountSummary,
   BrokerAdapter,
@@ -29,7 +30,8 @@ import type {
   OrderStatus,
   PlaceOrderRequest,
   SetUnderlyingResult,
-  TradingMode
+  TradingMode,
+  TradingSession
 } from '../shared/types';
 
 // TickType is exported as a type only (see @stoqey/ib's index.d.ts); the runtime
@@ -109,6 +111,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private optionsByReqId = new Map<number, PendingOption>();
   private optionsSubscribed = false;
   private delayedDataFallbackDone = false;
+  private underlyingSessions: TradingSession[] = [];
   private quoteFlushHandle: ReturnType<typeof setTimeout> | null = null;
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
@@ -191,9 +194,16 @@ export class IbBrokerAdapter implements BrokerAdapter {
     });
 
     this.ib.on(EventName.contractDetails, (reqId: number, details: ContractDetails) => {
-      if (reqId === this.underlyingReqId && details.contract.conId) {
-        this.underlyingConId = details.contract.conId;
-      }
+      if (reqId !== this.underlyingReqId) return;
+      if (details.contract.conId) this.underlyingConId = details.contract.conId;
+      // The broker's own schedule — accounts for holidays and half days that
+      // a hardcoded close time cannot. Requires "Expose entire trading
+      // schedule to API" in TWS; absent that, liquidHours is undefined and
+      // the UI falls back to the regular-session assumption.
+      this.underlyingSessions = parseIbTradingHours(
+        details.liquidHours ?? details.tradingHours,
+        details.timeZoneId ?? ''
+      );
     });
 
     this.ib.on(EventName.securityDefinitionOptionParameter, (_reqId, _exchange, _underConId, _tradingClass, _multiplier, expirations: string[], strikes: number[]) => {
@@ -340,6 +350,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
   async setUnderlying(symbol: string): Promise<SetUnderlyingResult> {
     this.symbol = symbol;
     this.underlyingConId = 0;
+    this.underlyingSessions = [];
     this.allStrikes = [];
     this.nearestExpiry = todayYYYYMMDD();
 
@@ -376,7 +387,13 @@ export class IbBrokerAdapter implements BrokerAdapter {
     log.info(
       `underlying ${symbol}: conId ${this.underlyingConId}, nearest expiry ${this.nearestExpiry}, ${this.allStrikes.length} strikes`
     );
-    return { symbol, conId: this.underlyingConId, expiry: this.nearestExpiry, expiryIsToday: this.nearestExpiry === today };
+    return {
+      symbol,
+      conId: this.underlyingConId,
+      expiry: this.nearestExpiry,
+      expiryIsToday: this.nearestExpiry === today,
+      sessions: this.underlyingSessions
+    };
   }
 
   subscribeMarketData(): void {

@@ -128,7 +128,9 @@ export class SimBrokerAdapter implements BrokerAdapter {
 
   async setUnderlying(symbol: string): Promise<SetUnderlyingResult> {
     this.symbol = symbol;
-    return { symbol, conId: 1, expiry: todayYYYYMMDD(), expiryIsToday: true };
+    // The simulator has no exchange behind it, so it publishes no schedule;
+    // the UI falls back to assuming a regular session.
+    return { symbol, conId: 1, expiry: todayYYYYMMDD(), expiryIsToday: true, sessions: [] };
   }
 
   subscribeMarketData(): void {

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { exchangeNow, formatDuration, msUntilExchangeClose } from '../src/shared/marketClock';
+import {
+  exchangeNow,
+  formatDuration,
+  msUntilExchangeClose,
+  msUntilSessionClose,
+  parseIbTradingHours
+} from '../src/shared/marketClock';
 
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
@@ -73,5 +79,63 @@ describe('formatDuration', () => {
 
   it('clamps negatives to zero', () => {
     expect(formatDuration(-5000)).toBe('00:00:00');
+  });
+});
+
+describe('parseIbTradingHours', () => {
+  const TZ = 'US/Eastern';
+
+  it('parses the full-schedule format into absolute instants', () => {
+    const sessions = parseIbTradingHours('20260730:0930-20260730:1600', TZ);
+    expect(sessions).toHaveLength(1);
+    // 09:30 EDT === 13:30Z, 16:00 EDT === 20:00Z
+    expect(new Date(sessions[0].start).toISOString()).toBe('2026-07-30T13:30:00.000Z');
+    expect(new Date(sessions[0].end).toISOString()).toBe('2026-07-30T20:00:00.000Z');
+  });
+
+  it('parses the legacy same-day format', () => {
+    const sessions = parseIbTradingHours('20260730:0930-1600', TZ);
+    expect(new Date(sessions[0].end).toISOString()).toBe('2026-07-30T20:00:00.000Z');
+  });
+
+  it('skips CLOSED days — this is what fixes holiday over-reporting', () => {
+    const sessions = parseIbTradingHours('20261126:CLOSED;20261127:0930-20261127:1300', TZ);
+    expect(sessions).toHaveLength(1);
+    // Thanksgiving is skipped; the following half day closes at 13:00, not 16:00.
+    expect(new Date(sessions[0].end).toISOString()).toBe('2026-11-27T18:00:00.000Z');
+  });
+
+  it('applies the exchange offset in winter (EST) as well as summer (EDT)', () => {
+    const winter = parseIbTradingHours('20260115:0930-20260115:1600', TZ);
+    // 16:00 EST === 21:00Z (one hour later in UTC than the EDT case).
+    expect(new Date(winter[0].end).toISOString()).toBe('2026-01-15T21:00:00.000Z');
+  });
+
+  it('handles a session wrapping past midnight in the legacy format', () => {
+    const sessions = parseIbTradingHours('20260730:1700-0300', TZ);
+    expect(sessions[0].end).toBeGreaterThan(sessions[0].start);
+    expect(sessions[0].end - sessions[0].start).toBe(10 * 3_600_000);
+  });
+
+  it('returns [] for missing or unparseable input', () => {
+    expect(parseIbTradingHours(undefined, TZ)).toEqual([]);
+    expect(parseIbTradingHours('', TZ)).toEqual([]);
+    expect(parseIbTradingHours('not-a-schedule', TZ)).toEqual([]);
+  });
+});
+
+describe('msUntilSessionClose', () => {
+  const sessions = parseIbTradingHours('20261127:0930-20261127:1300', 'US/Eastern');
+
+  it('counts down to the broker-reported close, including half days', () => {
+    // 11:00 EST on the half day → 2h to the 13:00 close.
+    const ms = msUntilSessionClose(sessions, new Date('2026-11-27T16:00:00Z'));
+    expect(ms).toBe(2 * 3_600_000);
+  });
+
+  it('returns null outside any session rather than guessing', () => {
+    expect(msUntilSessionClose(sessions, new Date('2026-11-27T19:00:00Z'))).toBeNull(); // after close
+    expect(msUntilSessionClose(sessions, new Date('2026-11-27T12:00:00Z'))).toBeNull(); // pre-open
+    expect(msUntilSessionClose([], new Date())).toBeNull();
   });
 });

@@ -7,7 +7,8 @@ import type {
   ConnectionInfo,
   OptionQuote,
   OrderState,
-  TradingMode
+  TradingMode,
+  TradingSession
 } from './shared/types';
 
 export interface OpenOrderView {
@@ -39,6 +40,7 @@ interface MarketState {
   options: OptionQuote[];
   expiry: string | null;
   expiryIsToday: boolean;
+  sessions: TradingSession[];
   priceRange: { min: number; max: number };
   fixedRange: { min: number; max: number };
 }
@@ -53,6 +55,7 @@ const marketSlice = createSlice({
     options: [],
     expiry: null,
     expiryIsToday: false,
+    sessions: [],
     priceRange: { min: 60, max: 140 },
     fixedRange: { min: 0, max: 200 }
   } as MarketState,
@@ -60,9 +63,10 @@ const marketSlice = createSlice({
     setSymbol(s, a: PayloadAction<string>) {
       s.symbol = a.payload;
     },
-    setExpiry(s, a: PayloadAction<{ expiry: string; expiryIsToday: boolean }>) {
+    setExpiry(s, a: PayloadAction<{ expiry: string; expiryIsToday: boolean; sessions: TradingSession[] }>) {
       s.expiry = a.payload.expiry;
       s.expiryIsToday = a.payload.expiryIsToday;
+      s.sessions = a.payload.sessions;
     },
     underlyingTick(s, a: PayloadAction<{ price: number; time: number }>) {
       const { price, time } = a.payload;

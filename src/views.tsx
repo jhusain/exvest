@@ -12,7 +12,7 @@ import { TAG_ROW_H, TAG_HEIGHT, layoutTagsGrouped, priceColor, clamp, type TagIn
 import { createBroker } from './broker/createBroker';
 import { SimBrokerAdapter } from './broker/SimBrokerAdapter';
 import { MODE_INFO } from './shared/modes';
-import { formatDuration, msUntilExchangeClose } from './shared/marketClock';
+import { formatDuration, msUntilExchangeClose, msUntilSessionClose } from './shared/marketClock';
 import type { BrokerAdapter } from './shared/types';
 import { useAppDispatch, useAppSelector } from './hooks';
 
@@ -57,15 +57,26 @@ function Header() {
   const [sym, setSym] = useState(symbol);
   useEffect(() => setSym(symbol), [symbol]);
 
-  // Counts down to the exchange close (16:00 New York), not to 16:00 wherever
-  // the user happens to be sitting.
-  const [remaining, setRemaining] = useState(() => formatDuration(msUntilExchangeClose()));
+  // Time to the close of the *exchange* session. Prefers the broker's own
+  // schedule (which knows about holidays and half days); falls back to
+  // assuming a regular 09:30-16:00 New York day when none is published.
+  const sessions = useAppSelector((s) => selectMarket(s).sessions);
+  const [remaining, setRemaining] = useState('--:--:--');
   useEffect(() => {
-    const tick = () => setRemaining(formatDuration(msUntilExchangeClose()));
+    const tick = () => {
+      const fromBroker = sessions.length ? msUntilSessionClose(sessions) : null;
+      if (sessions.length) {
+        // null => no session covers now, i.e. the market is genuinely shut.
+        setRemaining(fromBroker == null ? 'CLOSED' : formatDuration(fromBroker));
+      } else {
+        const ms = msUntilExchangeClose();
+        setRemaining(ms > 0 ? formatDuration(ms) : 'CLOSED');
+      }
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [sessions]);
 
   const modeInfo = MODE_INFO[connection.mode];
   const expiryText = expiry ? (expiryIsToday ? 'TODAY' : expiry) : '--';
@@ -489,7 +500,7 @@ function RootApp() {
       const symbol = store.getState().market.symbol;
       const setup = await sim.setUnderlying(symbol);
       if (cancelled) return;
-      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday }));
+      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
     }
 
     async function bootstrap() {
@@ -500,7 +511,7 @@ function RootApp() {
       const symbol = store.getState().market.symbol;
       const setup = await broker.setUnderlying(symbol);
       if (cancelled) return;
-      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday }));
+      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
     }
 
     void bootstrap();
@@ -523,7 +534,7 @@ function RootApp() {
     broker.unsubscribeMarketData();
     void broker.setUnderlying(symbol).then((setup) => {
       if (cancelled) return;
-      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday }));
+      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
       broker.subscribeMarketData();
     });
     return () => {
