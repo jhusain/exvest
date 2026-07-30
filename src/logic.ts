@@ -43,6 +43,19 @@ interface MarketState {
   sessions: TradingSession[];
   priceRange: { min: number; max: number };
   fixedRange: { min: number; max: number };
+  /** Whether the axis scale has been derived from a real price yet. */
+  rangesInitialized: boolean;
+}
+
+/**
+ * Derives the axis scales from the current price. Kept separate so it can run
+ * both from the explicit action and automatically on the first real tick.
+ */
+function applyRanges(s: MarketState) {
+  const twoX = s.price * 2;
+  s.fixedRange = { min: 0, max: twoX };
+  const span = s.price * 0.8;
+  s.priceRange = { min: Math.max(0, s.price - span / 2), max: s.price + span / 2 };
 }
 
 const marketSlice = createSlice({
@@ -57,11 +70,14 @@ const marketSlice = createSlice({
     expiryIsToday: false,
     sessions: [],
     priceRange: { min: 60, max: 140 },
-    fixedRange: { min: 0, max: 200 }
+    fixedRange: { min: 0, max: 200 },
+    rangesInitialized: false
   } as MarketState,
   reducers: {
     setSymbol(s, a: PayloadAction<string>) {
       s.symbol = a.payload;
+      // A different instrument needs a scale of its own.
+      s.rangesInitialized = false;
     },
     setExpiry(s, a: PayloadAction<{ expiry: string; expiryIsToday: boolean; sessions: TradingSession[] }>) {
       s.expiry = a.payload.expiry;
@@ -74,15 +90,27 @@ const marketSlice = createSlice({
       s.lastTs = time;
       s.history.push({ t: time, p: price });
       if (s.history.length > 300) s.history.shift();
+
+      // The axis scale must come from a real price, not the placeholder the
+      // store starts with. A fixed timer cannot do this: the first quote can
+      // be many seconds out when the delayed-data fallback has to negotiate
+      // first, and a scale built for $100 leaves a $740 underlying (and every
+      // strike near it) clamped off the edge of the chart.
+      if (!s.rangesInitialized && price > 0) {
+        applyRanges(s);
+        s.rangesInitialized = true;
+      } else if (price > 0 && (price < s.fixedRange.min || price > s.fixedRange.max)) {
+        // Price has left the scale entirely — the axis is for a different
+        // instrument (e.g. the symbol changed). Rebuild rather than clamp.
+        applyRanges(s);
+      }
     },
     optionQuotes(s, a: PayloadAction<OptionQuote[]>) {
       s.options = a.payload;
     },
     initRanges(s) {
-      const twoX = s.price * 2;
-      s.fixedRange = { min: 0, max: twoX };
-      const span = s.price * 0.8;
-      s.priceRange = { min: Math.max(0, s.price - span / 2), max: s.price + span / 2 };
+      applyRanges(s);
+      s.rangesInitialized = true;
     },
     setPriceViewport(s, a: PayloadAction<{ min: number; max: number }>) {
       s.priceRange = a.payload;
