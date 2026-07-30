@@ -479,6 +479,14 @@ function RootApp() {
           }
         })
       ];
+    }
+
+    /**
+     * Must run only after setUnderlying() has resolved: the adapter derives
+     * its market-data request id there, and subscribing first both orphans
+     * the subscription and leaves the chain without an underlying price.
+     */
+    function startMarketData(broker: BrokerAdapter) {
       broker.subscribeMarketData();
       initTimer = setTimeout(() => dispatch(actions.initRanges()), 700);
     }
@@ -501,6 +509,7 @@ function RootApp() {
       const setup = await sim.setUnderlying(symbol);
       if (cancelled) return;
       dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
+      startMarketData(sim);
     }
 
     async function bootstrap() {
@@ -512,6 +521,7 @@ function RootApp() {
       const setup = await broker.setUnderlying(symbol);
       if (cancelled) return;
       dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
+      startMarketData(broker);
     }
 
     void bootstrap();

@@ -46,6 +46,8 @@ const QUOTE_EMIT_THROTTLE_MS = 250;
 const CONNECT_TIMEOUT_MS = 5000;
 /** How long to wait for an underlying price before reporting that the chain cannot be built. */
 const CHAIN_WATCHDOG_MS = 8000;
+/** Cap on waiting for an IB request's *End event, so a missing one cannot hang startup. */
+const REQUEST_TIMEOUT_MS = 10000;
 
 /**
  * IB codes meaning "you are not entitled to live data for this instrument":
@@ -352,6 +354,43 @@ export class IbBrokerAdapter implements BrokerAdapter {
     this.ib.disconnect();
   }
 
+  /**
+   * Issues a request and waits for its matching *End event, with a timeout.
+   *
+   * Without the timeout a missing end-event strands setUnderlying() forever,
+   * which in turn strands the renderer's bootstrap: no expiry, no chain, and
+   * no indication of why. Resolving on timeout lets the caller continue with
+   * whatever partial data arrived.
+   */
+  private awaitEnd(event: EventName, reqId: number, what: string, send: () => void): Promise<void> {
+    // @stoqey/ib types on()/removeListener() as a union of per-event
+    // overloads, which a variable EventName cannot satisfy; the payload we
+    // need (the request id) is the first argument for every *End event.
+    const emitter = this.ib as unknown as {
+      on(event: EventName, listener: (reqId: number) => void): void;
+      removeListener(event: EventName, listener: (reqId: number) => void): void;
+    };
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (timedOut: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        emitter.removeListener(event, onEnd);
+        if (timedOut) {
+          log.warn(`timed out after ${REQUEST_TIMEOUT_MS}ms waiting for ${what} (reqId ${reqId}) — continuing with partial data`);
+        }
+        resolve();
+      };
+      const onEnd = (rid: number) => {
+        if (rid === reqId) finish(false);
+      };
+      const timer = setTimeout(() => finish(true), REQUEST_TIMEOUT_MS);
+      emitter.on(event, onEnd);
+      send();
+    });
+  }
+
   async setUnderlying(symbol: string): Promise<SetUnderlyingResult> {
     this.symbol = symbol;
     this.underlyingConId = 0;
@@ -362,28 +401,20 @@ export class IbBrokerAdapter implements BrokerAdapter {
     const stock = new Stock(symbol, 'SMART', 'USD');
     this.underlyingReqId = this.nextId();
 
-    await new Promise<void>((resolve) => {
-      const onEnd = (reqId: number) => {
-        if (reqId === this.underlyingReqId) {
-          this.ib.removeListener(EventName.contractDetailsEnd, onEnd);
-          resolve();
-        }
-      };
-      this.ib.on(EventName.contractDetailsEnd, onEnd);
-      this.ib.reqContractDetails(this.underlyingReqId, stock);
-    });
+    await this.awaitEnd(
+      EventName.contractDetailsEnd,
+      this.underlyingReqId,
+      'contract details',
+      () => this.ib.reqContractDetails(this.underlyingReqId, stock)
+    );
 
     const optParamsReqId = this.nextId();
-    await new Promise<void>((resolve) => {
-      const onEnd = (reqId: number) => {
-        if (reqId === optParamsReqId) {
-          this.ib.removeListener(EventName.securityDefinitionOptionParameterEnd, onEnd);
-          resolve();
-        }
-      };
-      this.ib.on(EventName.securityDefinitionOptionParameterEnd, onEnd);
-      this.ib.reqSecDefOptParams(optParamsReqId, symbol, '', 'STK', this.underlyingConId);
-    });
+    await this.awaitEnd(
+      EventName.securityDefinitionOptionParameterEnd,
+      optParamsReqId,
+      'option chain definition',
+      () => this.ib.reqSecDefOptParams(optParamsReqId, symbol, '', 'STK', this.underlyingConId)
+    );
 
     const today = todayYYYYMMDD();
     if (!this.underlyingConId) {
@@ -402,6 +433,13 @@ export class IbBrokerAdapter implements BrokerAdapter {
   }
 
   subscribeMarketData(): void {
+    if (!this.underlyingReqId) {
+      // setUnderlying() allocates the request id and resolves the contract.
+      // Subscribing first would issue reqMktData under id 0 and then ignore
+      // every tick, since the id would no longer match once it is assigned.
+      log.error('subscribeMarketData() called before setUnderlying() — ignoring; no market data will flow');
+      return;
+    }
     log.info(`subscribing to market data for ${this.symbol} (reqId ${this.underlyingReqId})`);
     const stock = new Stock(this.symbol, 'SMART', 'USD');
     this.ib.reqMktData(this.underlyingReqId, stock, '', false, false);
