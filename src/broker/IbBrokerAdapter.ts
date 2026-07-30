@@ -55,6 +55,15 @@ const REQUEST_TIMEOUT_MS = 10000;
  * @see https://interactivebrokers.github.io/tws-api/message_codes.html
  */
 const MARKET_DATA_ENTITLEMENT_CODES = [354, 10089, 10090];
+/**
+ * Codes that report a degraded-but-working state rather than a failure, so
+ * they are logged but never surfaced to the UI as errors:
+ *  - 10167: "Requested market data is not subscribed. Displaying delayed
+ *    market data." — delayed data IS flowing, which is what we asked for.
+ *  - 300: "Can't find EId with tickerId" — a cancel for a subscription that
+ *    was not outstanding. Bookkeeping the user cannot act on.
+ */
+const NON_FATAL_NOTICE_CODES = [300, 10167];
 /** reqMarketDataType(4): delayed, falling back to the last snapshot when the market is closed. */
 const IB_MARKET_DATA_TYPE_DELAYED_FROZEN = 4;
 
@@ -120,6 +129,12 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private underlyingSessions: TradingSession[] = [];
   private quoteFlushHandle: ReturnType<typeof setTimeout> | null = null;
   private chainWatchdog: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * reqIds with a live reqMktData subscription. IB answers cancelMktData for
+   * an unknown id with error 300 ("Can't find EId with tickerId"), so every
+   * cancel is gated on this set.
+   */
+  private activeMktDataReqIds = new Set<number>();
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
   private orderIdByReqOrderId = new Map<number, string>();
@@ -137,6 +152,11 @@ export class IbBrokerAdapter implements BrokerAdapter {
       // the same event as real errors. Log them, but never surface as errors.
       if (isIbWarningCode(errCode)) {
         log.info(`notice ${errCode}: ${error?.message ?? ''}`);
+        return;
+      }
+
+      if (NON_FATAL_NOTICE_CODES.includes(errCode)) {
+        log.warn(`notice ${errCode} (reqId ${reqId}): ${error?.message ?? String(error)}`);
         return;
       }
 
@@ -443,6 +463,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
     log.info(`subscribing to market data for ${this.symbol} (reqId ${this.underlyingReqId})`);
     const stock = new Stock(this.symbol, 'SMART', 'USD');
     this.ib.reqMktData(this.underlyingReqId, stock, '', false, false);
+    this.activeMktDataReqIds.add(this.underlyingReqId);
 
     // The option chain is only subscribed once an underlying price arrives
     // (the strike window is centred on it), and that happens off the tick
@@ -552,6 +573,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
       });
       this.ib.reqContractDetails(detailsReqId, contract);
       this.ib.reqMktData(reqId, contract, '106', false, false);
+      this.activeMktDataReqIds.add(reqId);
     }
   }
 
@@ -560,16 +582,24 @@ export class IbBrokerAdapter implements BrokerAdapter {
    * market data type. Used after switching to delayed data, since the type
    * only applies to subscriptions made after reqMarketDataType.
    */
+  /** Cancels a market-data request only if one is actually outstanding (see error 300). */
+  private cancelMktDataIfActive(reqId: number): void {
+    if (!this.activeMktDataReqIds.delete(reqId)) return;
+    this.ib.cancelMktData(reqId);
+  }
+
   private resubscribeMarketData(): void {
     if (this.underlyingReqId) {
-      this.ib.cancelMktData(this.underlyingReqId);
+      this.cancelMktDataIfActive(this.underlyingReqId);
       const stock = new Stock(this.symbol, 'SMART', 'USD');
       this.ib.reqMktData(this.underlyingReqId, stock, '', false, false);
+      this.activeMktDataReqIds.add(this.underlyingReqId);
     }
     for (const [reqId, pending] of this.optionsByReqId) {
-      this.ib.cancelMktData(reqId);
+      this.cancelMktDataIfActive(reqId);
       const contract = new IBOption(this.symbol, this.nearestExpiry, pending.strike, OptionType.Put, 'SMART', 'USD');
       this.ib.reqMktData(reqId, contract, '106', false, false);
+      this.activeMktDataReqIds.add(reqId);
     }
     log.info(`re-subscribed underlying + ${this.optionsByReqId.size} option contracts with delayed data`);
   }
@@ -579,8 +609,8 @@ export class IbBrokerAdapter implements BrokerAdapter {
       clearTimeout(this.chainWatchdog);
       this.chainWatchdog = null;
     }
-    if (this.underlyingReqId) this.ib.cancelMktData(this.underlyingReqId);
-    for (const reqId of this.optionsByReqId.keys()) this.ib.cancelMktData(reqId);
+    if (this.underlyingReqId) this.cancelMktDataIfActive(this.underlyingReqId);
+    for (const reqId of this.optionsByReqId.keys()) this.cancelMktDataIfActive(reqId);
     this.optionsByReqId.clear();
     this.optionsSubscribed = false;
     if (this.quoteFlushHandle) {
