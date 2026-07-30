@@ -77,7 +77,7 @@ const REQUEST_TIMEOUT_MS = 10000;
  * 10089/10090 (subscription required) and 354 (market data not subscribed).
  * @see https://interactivebrokers.github.io/tws-api/message_codes.html
  */
-const MARKET_DATA_ENTITLEMENT_CODES = [354, 10089, 10090];
+const MARKET_DATA_ENTITLEMENT_CODES = [354, 10089, 10090, 10168];
 /**
  * Codes that report a degraded-but-working state rather than a failure, so
  * they are logged but never surfaced to the UI as errors:
@@ -87,8 +87,28 @@ const MARKET_DATA_ENTITLEMENT_CODES = [354, 10089, 10090];
  *    was not outstanding. Bookkeeping the user cannot act on.
  */
 const NON_FATAL_NOTICE_CODES = [300, 10167];
-/** reqMarketDataType(4): delayed, falling back to the last snapshot when the market is closed. */
+/**
+ * reqMarketDataType(4) — "delayed-frozen": enables delayed data, and the last
+ * snapshot when the market is closed. Per the TWS API, "by default only
+ * real-time (1) market data is enabled", and each higher type *enables*
+ * additional fallbacks rather than forcing a downgrade — an account entitled
+ * to live data still receives it. This must be set BEFORE reqMktData:
+ * requesting first and reacting to the entitlement error costs a round trip
+ * and, for some accounts, fails outright with 10168 ("delayed market data is
+ * not enabled") rather than the recoverable 10089.
+ *
+ * Override with EXVEST_IB_MARKET_DATA_TYPE (1 real-time, 2 frozen,
+ * 3 delayed, 4 delayed-frozen).
+ */
 const IB_MARKET_DATA_TYPE_DELAYED_FROZEN = 4;
+
+function configuredMarketDataType(): number {
+  // Reached via globalThis: this module sits under src/ and is typechecked by
+  // the renderer config, which has no Node types (it never runs there).
+  const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  const raw = Number(g.process?.env?.EXVEST_IB_MARKET_DATA_TYPE);
+  return raw >= 1 && raw <= 4 ? raw : IB_MARKET_DATA_TYPE_DELAYED_FROZEN;
+}
 
 const log = createLogger('ib');
 
@@ -186,6 +206,16 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
       log.error(`error ${errCode} (reqId ${reqId}): ${error?.message ?? String(error)}`);
 
+      // Delayed data was already requested up front, so a 10168 here means IB
+      // is offering neither live nor delayed for this instrument.
+      if (errCode === 10168 && this.delayedDataFallbackDone) {
+        log.error(
+          'delayed data was requested at connect but IB still reports it unavailable. ' +
+            'Check Market Data Connections in TWS; a paper account often needs market-data ' +
+            'subscriptions shared from the live account under Account Settings.'
+        );
+      }
+
       // No live market-data entitlement for this instrument. IB offers free
       // delayed data, but only if the client explicitly opts in — switch the
       // whole session to delayed-frozen and re-issue the subscriptions.
@@ -232,6 +262,12 @@ export class IbBrokerAdapter implements BrokerAdapter {
         return;
       }
       this.emitter.emit('error', { code: errCode, message: error?.message ?? String(error) });
+    });
+
+    // What TWS actually applied per request: 1 live, 2 frozen, 3 delayed,
+    // 4 delayed-frozen. Tells you at a glance which data you are looking at.
+    this.ib.on(EventName.marketDataType, (reqId: number, type: number) => {
+      log.info(`market data type for reqId ${reqId}: ${type} (1=live 2=frozen 3=delayed 4=delayed-frozen)`);
     });
 
     this.ib.on(EventName.disconnected, () => {
@@ -369,6 +405,10 @@ export class IbBrokerAdapter implements BrokerAdapter {
         // (e.g. a market-data entitlement notice) get logged as "connect failed".
         this.ib.removeListener(EventName.error, onError);
         log.info(`connected to ${host}:${this.opts.port}`);
+        const mdType = configuredMarketDataType();
+        log.info(`requesting market data type ${mdType} (live where entitled, delayed otherwise)`);
+        this.ib.reqMarketDataType(mdType);
+        if (mdType !== 1) this.delayedDataFallbackDone = true;
         this.ib.reqAccountSummary(this.nextId(), 'All', 'AvailableFunds,NetLiquidation,BuyingPower');
         resolve({ mode: this.opts.mode, connected: true, accountId: null });
       });
