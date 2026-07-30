@@ -42,6 +42,8 @@ const TICK = { BID_SIZE: 0, BID: 1, ASK: 2, ASK_SIZE: 3, LAST: 4, CLOSE: 9 } as 
 const OPTION_CHAIN_SIZE = 12;
 const QUOTE_EMIT_THROTTLE_MS = 250;
 const CONNECT_TIMEOUT_MS = 5000;
+/** How long to wait for an underlying price before reporting that the chain cannot be built. */
+const CHAIN_WATCHDOG_MS = 8000;
 
 /**
  * IB codes meaning "you are not entitled to live data for this instrument":
@@ -113,6 +115,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private delayedDataFallbackDone = false;
   private underlyingSessions: TradingSession[] = [];
   private quoteFlushHandle: ReturnType<typeof setTimeout> | null = null;
+  private chainWatchdog: ReturnType<typeof setTimeout> | null = null;
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
   private orderIdByReqOrderId = new Map<number, string>();
@@ -400,6 +403,25 @@ export class IbBrokerAdapter implements BrokerAdapter {
     log.info(`subscribing to market data for ${this.symbol} (reqId ${this.underlyingReqId})`);
     const stock = new Stock(this.symbol, 'SMART', 'USD');
     this.ib.reqMktData(this.underlyingReqId, stock, '', false, false);
+
+    // The option chain is only subscribed once an underlying price arrives
+    // (the strike window is centred on it), and that happens off the tick
+    // handler. If no tick ever comes — the usual case outside market hours
+    // with no data entitlement — nothing errors and the UI just stays empty.
+    // Report that explicitly instead of failing silently.
+    if (this.chainWatchdog) clearTimeout(this.chainWatchdog);
+    this.chainWatchdog = setTimeout(() => {
+      this.chainWatchdog = null;
+      if (this.optionsSubscribed) return;
+      if (!this.underlyingPrice) {
+        log.warn(
+          `no underlying price for ${this.symbol} after ${CHAIN_WATCHDOG_MS}ms — the strike window is chosen relative to the underlying price, so no strikes will be displayed. ` +
+            'This is expected outside market hours when no quotes (live or delayed-frozen) are available.'
+        );
+      } else if (!this.allStrikes.length) {
+        log.warn(`no strikes returned by reqSecDefOptParams for ${this.symbol} — cannot build a chain`);
+      }
+    }, CHAIN_WATCHDOG_MS);
   }
 
   private maybeSubscribeOptionChain(): void {
@@ -452,6 +474,10 @@ export class IbBrokerAdapter implements BrokerAdapter {
   }
 
   unsubscribeMarketData(): void {
+    if (this.chainWatchdog) {
+      clearTimeout(this.chainWatchdog);
+      this.chainWatchdog = null;
+    }
     if (this.underlyingReqId) this.ib.cancelMktData(this.underlyingReqId);
     for (const reqId of this.optionsByReqId.keys()) this.ib.cancelMktData(reqId);
     this.optionsByReqId.clear();
