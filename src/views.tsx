@@ -133,8 +133,11 @@ function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: 
   const openOrders = useAppSelector((s) => selectOrders(s).openOrders);
 
   const group0: TagInput[] = [];
-  if (bounds.min != null) group0.push({ key: 'min', x: pas2x(bounds.min), text: `$${bounds.min}`, color: 'white' });
-  if (bounds.max != null) group0.push({ key: 'max', x: pas2x(bounds.max), text: `$${bounds.max}`, color: 'white' });
+  // Labelled, because otherwise these read as duplicate price tags: they are
+  // the low/high ends of the option PAS range, which sits close to the
+  // underlying price and so renders right next to it.
+  if (bounds.min != null) group0.push({ key: 'min', x: pas2x(bounds.min), text: `min $${bounds.min}`, color: 'white' });
+  if (bounds.max != null) group0.push({ key: 'max', x: pas2x(bounds.max), text: `max $${bounds.max}`, color: 'white' });
 
   const group1: TagInput[] = [{ key: 'm', x: pas2x(price), text: `$${price.toFixed(2)}`, color: pClr }];
 
@@ -551,6 +554,17 @@ function RootApp() {
       cancelled = true;
     };
   }, [symbol, dispatch]);
+
+  // Keep the axis fitted to where the option PAS values actually are. They
+  // cluster within about a dollar, so a price-derived span renders the
+  // bid/ask rectangles sub-pixel.
+  const pasBounds = useAppSelector(selectOptionPasBounds);
+  const autoRange = useAppSelector((s) => selectMarket(s).autoRange);
+  const livePrice = useAppSelector((s) => selectMarket(s).price);
+  useEffect(() => {
+    if (!autoRange || pasBounds.min == null || pasBounds.max == null) return;
+    dispatch(actions.fitRangeToPas({ min: pasBounds.min, max: pasBounds.max, price: livePrice }));
+  }, [autoRange, pasBounds.min, pasBounds.max, livePrice, dispatch]);
 
   const modeInfo = MODE_INFO[connection.mode];
 

@@ -45,6 +45,8 @@ interface MarketState {
   fixedRange: { min: number; max: number };
   /** Whether the axis scale has been derived from a real price yet. */
   rangesInitialized: boolean;
+  /** False once the user pans/zooms, so auto-fitting stops fighting them. */
+  autoRange: boolean;
 }
 
 /**
@@ -71,7 +73,8 @@ const marketSlice = createSlice({
     sessions: [],
     priceRange: { min: 60, max: 140 },
     fixedRange: { min: 0, max: 200 },
-    rangesInitialized: false
+    rangesInitialized: false,
+    autoRange: true
   } as MarketState,
   reducers: {
     setSymbol(s, a: PayloadAction<string>) {
@@ -114,6 +117,32 @@ const marketSlice = createSlice({
     },
     setPriceViewport(s, a: PayloadAction<{ min: number; max: number }>) {
       s.priceRange = a.payload;
+      // An explicit viewport change is the user taking control.
+      s.autoRange = false;
+    },
+
+    /**
+     * Fits the axis to where the option PAS values actually are.
+     *
+     * Scaling from the underlying price alone does not work for this
+     * strategy: every PAS is `strike - premium + commission`, which for a
+     * near-the-money chain clusters within a dollar or so. A price-derived
+     * span (740 +/- 40% => ~$590 wide) squeezes that entire cluster into
+     * well under a pixel, which is why the bid/ask rectangles were invisible.
+     */
+    fitRangeToPas(s, a: PayloadAction<{ min: number; max: number; price: number }>) {
+      if (!s.autoRange) return;
+      const lo = Math.min(a.payload.min, a.payload.price);
+      const hi = Math.max(a.payload.max, a.payload.price);
+      // Floor the span so a chain whose PAS values coincide does not zoom to
+      // an absurd magnification.
+      const span = Math.max(hi - lo, Math.max(0.5, a.payload.price * 0.002));
+      const pad = span * 0.25;
+      s.priceRange = { min: lo - pad, max: hi + pad };
+      // The pan/zoom extent stays a comfortable multiple of the data span, so
+      // the viewport handle in the overview bar remains grabbable.
+      s.fixedRange = { min: Math.max(0, lo - span * 8), max: hi + span * 8 };
+      s.rangesInitialized = true;
     }
   }
 });
