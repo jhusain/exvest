@@ -18,6 +18,7 @@ import {
   type TickType
 } from '@stoqey/ib';
 import { TypedEmitter } from '../shared/emitter';
+import { createLogger, isIbWarningCode } from '../shared/log';
 import type {
   AccountSummary,
   BrokerAdapter,
@@ -39,6 +40,8 @@ const TICK = { BID_SIZE: 0, BID: 1, ASK: 2, ASK_SIZE: 3, LAST: 4, CLOSE: 9 } as 
 const OPTION_CHAIN_SIZE = 12;
 const QUOTE_EMIT_THROTTLE_MS = 250;
 const CONNECT_TIMEOUT_MS = 5000;
+
+const log = createLogger('ib');
 
 export interface IbBrokerAdapterOptions {
   host?: string;
@@ -109,6 +112,16 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private wireEvents() {
     this.ib.on(EventName.error, (error: Error, code: unknown, reqId: number) => {
       const errCode = typeof code === 'number' ? code : Number(code);
+
+      // IB delivers status notices ("Market data farm connection is OK") over
+      // the same event as real errors. Log them, but never surface as errors.
+      if (isIbWarningCode(errCode)) {
+        log.info(`notice ${errCode}: ${error?.message ?? ''}`);
+        return;
+      }
+
+      log.error(`error ${errCode} (reqId ${reqId}): ${error?.message ?? String(error)}`);
+
       // Connection-fatal codes: surface as a connectionStatus drop so the
       // renderer can fall back to the client simulator.
       if ([502, 504, 1100, 1300].includes(errCode)) {
@@ -145,6 +158,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
     });
 
     this.ib.on(EventName.disconnected, () => {
+      log.warn('disconnected from IB');
       this.emitter.emit('connectionStatus', {
         mode: this.opts.mode,
         connected: false,
@@ -203,6 +217,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
     this.ib.on(EventName.orderStatus, (orderId: number, status: IBOrderStatus, filled: number, remaining: number, avgFillPrice: number) => {
       const id = String(orderId);
       const trackedOptionId = this.orderIdByReqOrderId.get(orderId);
+      log.info(`orderStatus ${orderId}: ${status} (filled ${filled}, remaining ${remaining})`);
       const state: OrderState = {
         id,
         conId: 0,
@@ -250,20 +265,42 @@ export class IbBrokerAdapter implements BrokerAdapter {
   }
 
   async connect(): Promise<ConnectionInfo> {
+    const host = this.opts.host ?? '127.0.0.1';
+    log.info(
+      `connecting to ${host}:${this.opts.port} (clientId ${this.opts.clientId ?? 0}, mode ${this.opts.mode}, timeout ${CONNECT_TIMEOUT_MS}ms)`
+    );
+
     const info = await new Promise<ConnectionInfo>((resolve) => {
       const timeout = setTimeout(() => {
+        log.error(
+          `connect timed out after ${CONNECT_TIMEOUT_MS}ms — is TWS/Gateway running on ${host}:${this.opts.port} with "Enable ActiveX and Socket Clients" turned on?`
+        );
         resolve({ mode: this.opts.mode, connected: false, accountId: null, reason: 'IB Gateway connect timed out' });
       }, CONNECT_TIMEOUT_MS);
 
       this.ib.once(EventName.connected, () => {
         clearTimeout(timeout);
+        log.info(`connected to ${host}:${this.opts.port}`);
         this.ib.reqAccountSummary(this.nextId(), 'All', 'AvailableFunds,NetLiquidation,BuyingPower');
         resolve({ mode: this.opts.mode, connected: true, accountId: null });
       });
-      this.ib.once(EventName.error, (error: Error) => {
+
+      // Only a genuine error aborts the attempt. IB's 2100-series status
+      // notices routinely arrive around connect time and must not be mistaken
+      // for a failure, or a healthy session gets torn down before it starts.
+      const onError = (error: Error, code: unknown) => {
+        const errCode = typeof code === 'number' ? code : Number(code);
+        if (isIbWarningCode(errCode)) {
+          log.info(`notice ${errCode} during connect: ${error?.message ?? ''}`);
+          return;
+        }
+        this.ib.removeListener(EventName.error, onError);
         clearTimeout(timeout);
+        log.error(`connect failed (${errCode}): ${error?.message ?? String(error)}`);
         resolve({ mode: this.opts.mode, connected: false, accountId: null, reason: error?.message });
-      });
+      };
+      this.ib.on(EventName.error, onError);
+
       this.ib.connect();
     });
     return info;
@@ -307,10 +344,17 @@ export class IbBrokerAdapter implements BrokerAdapter {
     });
 
     const today = todayYYYYMMDD();
+    if (!this.underlyingConId) {
+      log.warn(`no contract details returned for ${symbol} — check the symbol and your market-data permissions`);
+    }
+    log.info(
+      `underlying ${symbol}: conId ${this.underlyingConId}, nearest expiry ${this.nearestExpiry}, ${this.allStrikes.length} strikes`
+    );
     return { symbol, conId: this.underlyingConId, expiry: this.nearestExpiry, expiryIsToday: this.nearestExpiry === today };
   }
 
   subscribeMarketData(): void {
+    log.info(`subscribing to market data for ${this.symbol} (reqId ${this.underlyingReqId})`);
     const stock = new Stock(this.symbol, 'SMART', 'USD');
     this.ib.reqMktData(this.underlyingReqId, stock, '', false, false);
   }
@@ -321,6 +365,12 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
     const minStrike = Math.ceil(this.underlyingPrice * 1.01);
     const strikes = this.allStrikes.filter((s) => s >= minStrike).slice(0, OPTION_CHAIN_SIZE);
+    log.info(
+      `underlying at ${this.underlyingPrice}; subscribing to ${strikes.length} put strikes for ${this.nearestExpiry}`
+    );
+    if (!strikes.length) {
+      log.warn(`no strikes at or above ${minStrike} in the chain — nothing to quote`);
+    }
 
     for (const strike of strikes) {
       const contract = new IBOption(this.symbol, this.nearestExpiry, strike, OptionType.Put, 'SMART', 'USD');
@@ -376,6 +426,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
         time: now
       });
     }
+    log.debug(`flushing ${quotes.length}/${this.optionsByReqId.size} option quotes`);
     if (quotes.length) this.emitter.emit('optionQuotes', quotes.sort((a, b) => a.strike - b.strike));
   }
 
@@ -414,11 +465,15 @@ export class IbBrokerAdapter implements BrokerAdapter {
         this.emitter.emit('orderUpdate', state);
       };
       this.ib.on(EventName.openOrder, onOpenOrder);
+      log.info(
+        `placing SELL ${req.qty} @ ${req.limitPrice} on conId ${req.conId} (orderId ${orderId}, transmit ${this.opts.mode !== 'ib-live-confirm'})`
+      );
       this.ib.placeOrder(orderId, contract, order);
     });
   }
 
   async cancelOrder(orderId: string): Promise<void> {
+    log.info(`cancelling order ${orderId}`);
     this.ib.cancelOrder(Number(orderId));
   }
 

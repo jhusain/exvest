@@ -2,7 +2,10 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import { IbBrokerAdapter } from '../src/broker/IbBrokerAdapter';
 import { modeFromArgv, defaultIbPort } from '../src/shared/modes';
+import { createLogger } from '../src/shared/log';
 import type { ConnectionInfo, TradingMode } from '../src/shared/types';
+
+const log = createLogger('main');
 
 // EXVEST_MODE lets `npm run electron:dev` (which can't pass CLI flags through
 // to the auto-spawned dev Electron process) select a mode for local testing;
@@ -12,6 +15,12 @@ const mode: TradingMode = modeOverride ?? modeFromArgv(process.argv.slice(1));
 const host = process.env.EXVEST_IB_HOST || '127.0.0.1';
 const port = Number(process.env.EXVEST_IB_PORT) || defaultIbPort(mode);
 const clientId = Number(process.env.EXVEST_IB_CLIENT_ID) || 7;
+
+log.info(
+  `starting: mode=${mode} host=${host} port=${port} clientId=${clientId}` +
+    (modeOverride ? ' (mode from EXVEST_MODE)' : '') +
+    (process.env.EXVEST_IB_PORT ? ' (port from EXVEST_IB_PORT)' : ` (default port for ${mode})`)
+);
 
 const adapter = new IbBrokerAdapter({ host, port, clientId, mode });
 
@@ -31,10 +40,14 @@ function wireForwarding() {
   adapter.on('orderUpdate', (p) => broadcast('exvest:event:orderUpdate', p));
   adapter.on('accountUpdate', (p) => broadcast('exvest:event:accountUpdate', p));
   adapter.on('connectionStatus', (p) => {
+    log.info(`connectionStatus: connected=${p.connected}${p.reason ? ` reason="${p.reason}"` : ''}`);
     connectionInfo = p;
     broadcast('exvest:event:connectionStatus', p);
   });
-  adapter.on('error', (p) => broadcast('exvest:event:error', p));
+  adapter.on('error', (p) => {
+    log.error(`adapter error${p.code ? ` (${p.code})` : ''}: ${p.message}`);
+    broadcast('exvest:event:error', p);
+  });
 }
 
 async function createWindow() {
@@ -46,6 +59,16 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+
+  // Renderer console output otherwise only exists in DevTools; mirror it into
+  // the terminal so `npm run electron:dev` shows main and renderer together.
+  const rendererLog = createLogger('renderer');
+  mainWindow.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+    const where = sourceId ? ` (${sourceId}:${lineNumber})` : '';
+    if (level === 'error') rendererLog.error(`${message}${where}`);
+    else if (level === 'warning') rendererLog.warn(`${message}${where}`);
+    else rendererLog.info(message);
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -69,6 +92,13 @@ app.whenReady().then(async () => {
   // Attempted once, at launch. A failure here is what the renderer's
   // createBroker() interprets as "fall back to the client-side simulator".
   connectionInfo = await adapter.connect();
+  if (connectionInfo.connected) {
+    log.info(`IB connected — running in ${mode}`);
+  } else {
+    log.warn(
+      `IB unavailable (${connectionInfo.reason ?? 'unknown reason'}) — the renderer will fall back to the client-side simulator (sim-client)`
+    );
+  }
   await createWindow();
 });
 
