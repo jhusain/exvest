@@ -41,6 +41,15 @@ const OPTION_CHAIN_SIZE = 12;
 const QUOTE_EMIT_THROTTLE_MS = 250;
 const CONNECT_TIMEOUT_MS = 5000;
 
+/**
+ * IB codes meaning "you are not entitled to live data for this instrument":
+ * 10089/10090 (subscription required) and 354 (market data not subscribed).
+ * @see https://interactivebrokers.github.io/tws-api/message_codes.html
+ */
+const MARKET_DATA_ENTITLEMENT_CODES = [354, 10089, 10090];
+/** reqMarketDataType(4): delayed, falling back to the last snapshot when the market is closed. */
+const IB_MARKET_DATA_TYPE_DELAYED_FROZEN = 4;
+
 const log = createLogger('ib');
 
 export interface IbBrokerAdapterOptions {
@@ -99,6 +108,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private allStrikes: number[] = [];
   private optionsByReqId = new Map<number, PendingOption>();
   private optionsSubscribed = false;
+  private delayedDataFallbackDone = false;
   private quoteFlushHandle: ReturnType<typeof setTimeout> | null = null;
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
@@ -121,6 +131,19 @@ export class IbBrokerAdapter implements BrokerAdapter {
       }
 
       log.error(`error ${errCode} (reqId ${reqId}): ${error?.message ?? String(error)}`);
+
+      // No live market-data entitlement for this instrument. IB offers free
+      // delayed data, but only if the client explicitly opts in — switch the
+      // whole session to delayed-frozen and re-issue the subscriptions.
+      // (Frozen so a closed market still returns the last snapshot rather
+      // than nothing at all.)
+      if (MARKET_DATA_ENTITLEMENT_CODES.includes(errCode) && !this.delayedDataFallbackDone) {
+        this.delayedDataFallbackDone = true;
+        log.warn('no live market-data entitlement — retrying with delayed-frozen data (IB market data type 4)');
+        this.ib.reqMarketDataType(IB_MARKET_DATA_TYPE_DELAYED_FROZEN);
+        this.resubscribeMarketData();
+        return;
+      }
 
       // Connection-fatal codes: surface as a connectionStatus drop so the
       // renderer can fall back to the client simulator.
@@ -280,6 +303,9 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
       this.ib.once(EventName.connected, () => {
         clearTimeout(timeout);
+        // Detach the connect-scoped error handler, or later unrelated errors
+        // (e.g. a market-data entitlement notice) get logged as "connect failed".
+        this.ib.removeListener(EventName.error, onError);
         log.info(`connected to ${host}:${this.opts.port}`);
         this.ib.reqAccountSummary(this.nextId(), 'All', 'AvailableFunds,NetLiquidation,BuyingPower');
         resolve({ mode: this.opts.mode, connected: true, accountId: null });
@@ -387,6 +413,25 @@ export class IbBrokerAdapter implements BrokerAdapter {
       this.ib.reqContractDetails(detailsReqId, contract);
       this.ib.reqMktData(reqId, contract, '106', false, false);
     }
+  }
+
+  /**
+   * Re-issues every active market-data request under the currently selected
+   * market data type. Used after switching to delayed data, since the type
+   * only applies to subscriptions made after reqMarketDataType.
+   */
+  private resubscribeMarketData(): void {
+    if (this.underlyingReqId) {
+      this.ib.cancelMktData(this.underlyingReqId);
+      const stock = new Stock(this.symbol, 'SMART', 'USD');
+      this.ib.reqMktData(this.underlyingReqId, stock, '', false, false);
+    }
+    for (const [reqId, pending] of this.optionsByReqId) {
+      this.ib.cancelMktData(reqId);
+      const contract = new IBOption(this.symbol, this.nearestExpiry, pending.strike, OptionType.Put, 'SMART', 'USD');
+      this.ib.reqMktData(reqId, contract, '106', false, false);
+    }
+    log.info(`re-subscribed underlying + ${this.optionsByReqId.size} option contracts with delayed data`);
   }
 
   unsubscribeMarketData(): void {

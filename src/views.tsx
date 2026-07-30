@@ -12,6 +12,7 @@ import { TAG_ROW_H, TAG_HEIGHT, layoutTagsGrouped, priceColor, clamp, type TagIn
 import { createBroker } from './broker/createBroker';
 import { SimBrokerAdapter } from './broker/SimBrokerAdapter';
 import { MODE_INFO } from './shared/modes';
+import { formatDuration, msUntilExchangeClose } from './shared/marketClock';
 import type { BrokerAdapter } from './shared/types';
 import { useAppDispatch, useAppSelector } from './hooks';
 
@@ -56,18 +57,13 @@ function Header() {
   const [sym, setSym] = useState(symbol);
   useEffect(() => setSym(symbol), [symbol]);
 
-  const [remaining, setRemaining] = useState('--:--:--');
+  // Counts down to the exchange close (16:00 New York), not to 16:00 wherever
+  // the user happens to be sitting.
+  const [remaining, setRemaining] = useState(() => formatDuration(msUntilExchangeClose()));
   useEffect(() => {
-    const id = setInterval(() => {
-      const now = new Date();
-      const close = new Date();
-      close.setHours(16, 0, 0, 0);
-      const diff = Math.max(0, close.getTime() - now.getTime());
-      const h = String(Math.floor(diff / 3_600_000)).padStart(2, '0');
-      const m = String(Math.floor((diff % 3_600_000) / 60_000)).padStart(2, '0');
-      const s = String(Math.floor((diff % 60_000) / 1000)).padStart(2, '0');
-      setRemaining(`${h}:${m}:${s}`);
-    }, 1000);
+    const tick = () => setRemaining(formatDuration(msUntilExchangeClose()));
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
 
