@@ -39,7 +39,30 @@ import type {
 // TickType is exported as a type only (see @stoqey/ib's index.d.ts); the runtime
 // enum values are stable per the TWS API tick-type reference, so we mirror the
 // handful this adapter needs rather than deep-importing the package's internal path.
-const TICK = { BID_SIZE: 0, BID: 1, ASK: 2, ASK_SIZE: 3, LAST: 4, CLOSE: 9 } as const;
+//
+// Delayed market data does NOT reuse the live tick ids — it has a parallel set
+// (66-76). Without an account entitled to live data every quote arrives under
+// those, so both sets must be handled or the chain silently stays empty.
+const TICK = {
+  BID_SIZE: 0,
+  BID: 1,
+  ASK: 2,
+  ASK_SIZE: 3,
+  LAST: 4,
+  CLOSE: 9,
+  DELAYED_BID: 66,
+  DELAYED_ASK: 67,
+  DELAYED_LAST: 68,
+  DELAYED_BID_SIZE: 69,
+  DELAYED_ASK_SIZE: 70,
+  DELAYED_CLOSE: 75
+} as const;
+
+const BID_TICKS: readonly number[] = [TICK.BID, TICK.DELAYED_BID];
+const ASK_TICKS: readonly number[] = [TICK.ASK, TICK.DELAYED_ASK];
+const BID_SIZE_TICKS: readonly number[] = [TICK.BID_SIZE, TICK.DELAYED_BID_SIZE];
+const ASK_SIZE_TICKS: readonly number[] = [TICK.ASK_SIZE, TICK.DELAYED_ASK_SIZE];
+const PRICE_TICKS: readonly number[] = [TICK.LAST, TICK.CLOSE, TICK.DELAYED_LAST, TICK.DELAYED_CLOSE];
 
 const OPTION_CHAIN_SIZE = 12;
 const QUOTE_EMIT_THROTTLE_MS = 250;
@@ -135,6 +158,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
    * cancel is gated on this set.
    */
   private activeMktDataReqIds = new Set<number>();
+  private warnedEmptyQuotes = false;
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
   private orderIdByReqOrderId = new Map<number, string>();
@@ -245,7 +269,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
     this.ib.on(EventName.tickPrice, (reqId: number, field: TickType, value: number) => {
       if (reqId === this.underlyingReqId) {
-        if (field === TICK.LAST || field === TICK.CLOSE) {
+        if (PRICE_TICKS.includes(field as number)) {
           this.underlyingPrice = value;
           this.emitter.emit('underlyingTick', { conId: this.underlyingConId, price: value, time: Date.now() });
           this.maybeSubscribeOptionChain();
@@ -254,16 +278,17 @@ export class IbBrokerAdapter implements BrokerAdapter {
       }
       const pending = this.optionsByReqId.get(reqId);
       if (!pending) return;
-      if (field === TICK.BID) pending.bid = value;
-      if (field === TICK.ASK) pending.ask = value;
+      log.debug(`tickPrice reqId ${reqId} strike ${pending.strike} field ${field} value ${value}`);
+      if (BID_TICKS.includes(field as number)) pending.bid = value;
+      if (ASK_TICKS.includes(field as number)) pending.ask = value;
       this.scheduleQuoteFlush();
     });
 
     this.ib.on(EventName.tickSize, (reqId: number, field?: TickType, value?: number) => {
       const pending = this.optionsByReqId.get(reqId);
       if (!pending || value === undefined) return;
-      if (field === TICK.BID_SIZE) pending.bidSize = value;
-      if (field === TICK.ASK_SIZE) pending.askSize = value;
+      if (BID_SIZE_TICKS.includes(field as number)) pending.bidSize = value;
+      if (ASK_SIZE_TICKS.includes(field as number)) pending.askSize = value;
       this.scheduleQuoteFlush();
     });
 
@@ -644,6 +669,18 @@ export class IbBrokerAdapter implements BrokerAdapter {
         probITM: p.delta != null ? Math.round(Math.abs(p.delta) * 100) : 0,
         time: now
       });
+    }
+    if (!quotes.length && this.optionsByReqId.size) {
+      // Every contract is missing a bid or an ask, so nothing can be plotted.
+      // Surface it once rather than silently emitting nothing forever.
+      if (!this.warnedEmptyQuotes) {
+        this.warnedEmptyQuotes = true;
+        log.warn(
+          `none of the ${this.optionsByReqId.size} subscribed contracts have both a bid and an ask yet — no strikes can be displayed. Run with EXVEST_DEBUG=1 to see the raw tick types.`
+        );
+      }
+    } else if (quotes.length) {
+      this.warnedEmptyQuotes = false;
     }
     log.debug(`flushing ${quotes.length}/${this.optionsByReqId.size} option quotes`);
     if (quotes.length) this.emitter.emit('optionQuotes', quotes.sort((a, b) => a.strike - b.strike));
