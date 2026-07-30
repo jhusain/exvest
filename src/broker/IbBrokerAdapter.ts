@@ -12,6 +12,8 @@ import {
   OrderAction,
   LimitOrder,
   OrderStatus as IBOrderStatus,
+  BarSizeSetting,
+  WhatToShow,
   type Contract,
   type ContractDetails,
   type Order as IBOrder,
@@ -413,15 +415,76 @@ export class IbBrokerAdapter implements BrokerAdapter {
     this.chainWatchdog = setTimeout(() => {
       this.chainWatchdog = null;
       if (this.optionsSubscribed) return;
+      if (!this.allStrikes.length) {
+        log.warn(`no strikes returned by reqSecDefOptParams for ${this.symbol} — cannot build a chain`);
+        return;
+      }
       if (!this.underlyingPrice) {
         log.warn(
-          `no underlying price for ${this.symbol} after ${CHAIN_WATCHDOG_MS}ms — the strike window is chosen relative to the underlying price, so no strikes will be displayed. ` +
-            'This is expected outside market hours when no quotes (live or delayed-frozen) are available.'
+          `no underlying price for ${this.symbol} after ${CHAIN_WATCHDOG_MS}ms — falling back to the last daily close so the chain can still be built`
         );
-      } else if (!this.allStrikes.length) {
-        log.warn(`no strikes returned by reqSecDefOptParams for ${this.symbol} — cannot build a chain`);
+        this.requestReferencePriceFromHistory();
       }
     }, CHAIN_WATCHDOG_MS);
+  }
+
+  /**
+   * Outside market hours no tick arrives, and the strike window is chosen
+   * relative to the underlying price — so without a reference price there is
+   * no chain to show at all. Historical bars are served when streaming quotes
+   * are not, so fall back to the most recent daily close.
+   *
+   * The resulting price is a stale close, not a live quote: it is good enough
+   * to centre the strike window, which is all it is used for. It is still
+   * emitted as an underlyingTick so the header shows something rather than
+   * $0.00.
+   */
+  private requestReferencePriceFromHistory(): void {
+    const reqId = this.nextId();
+    const stock = new Stock(this.symbol, 'SMART', 'USD');
+
+    // This @stoqey/ib version has no historicalDataEnd event: the decoder
+    // marks the end of the stream with a final historicalData row whose time
+    // starts with "finished" and whose numeric fields are -1. Bars arrive
+    // oldest-first, so keep the last real close rather than the first.
+    let latestClose = 0;
+
+    const onBar = (rid: number, time: string, _open: number, _high: number, _low: number, close: number) => {
+      if (rid !== reqId) return;
+
+      if (typeof time === 'string' && time.startsWith('finished')) {
+        this.ib.removeListener(EventName.historicalData, onBar);
+        if (!latestClose) {
+          log.warn(
+            `historical data returned no usable close for ${this.symbol} — no strikes can be displayed until a price is available`
+          );
+          return;
+        }
+        if (this.underlyingPrice) return; // a real tick beat us to it
+        this.underlyingPrice = latestClose;
+        log.info(`using last close ${latestClose} for ${this.symbol} as the strike-window reference price`);
+        this.emitter.emit('underlyingTick', { conId: this.underlyingConId, price: latestClose, time: Date.now() });
+        this.maybeSubscribeOptionChain();
+        return;
+      }
+
+      if (close > 0) latestClose = close;
+    };
+
+    this.ib.on(EventName.historicalData, onBar);
+
+    log.info(`requesting last daily close for ${this.symbol} (reqId ${reqId})`);
+    this.ib.reqHistoricalData(
+      reqId,
+      stock,
+      '', // now
+      '2 D', // a 2-day window so a weekend/holiday still yields a bar
+      BarSizeSetting.DAYS_ONE,
+      WhatToShow.TRADES,
+      1, // regular trading hours only
+      1, // formatDate: yyyymmdd strings
+      false
+    );
   }
 
   private maybeSubscribeOptionChain(): void {
