@@ -62,7 +62,13 @@ const BID_TICKS: readonly number[] = [TICK.BID, TICK.DELAYED_BID];
 const ASK_TICKS: readonly number[] = [TICK.ASK, TICK.DELAYED_ASK];
 const BID_SIZE_TICKS: readonly number[] = [TICK.BID_SIZE, TICK.DELAYED_BID_SIZE];
 const ASK_SIZE_TICKS: readonly number[] = [TICK.ASK_SIZE, TICK.DELAYED_ASK_SIZE];
-const PRICE_TICKS: readonly number[] = [TICK.LAST, TICK.CLOSE, TICK.DELAYED_LAST, TICK.DELAYED_CLOSE];
+// Traded price. CLOSE is deliberately NOT here: it is the *previous
+// session's* close, so accepting it as the current price can leave the
+// underlying showing yesterday's value against today's option quotes — which
+// puts PAS on the wrong side of spot.
+const LAST_TICKS: readonly number[] = [TICK.LAST, TICK.DELAYED_LAST];
+/** Prior close: only ever a seed before a real traded price arrives. */
+const CLOSE_TICKS: readonly number[] = [TICK.CLOSE, TICK.DELAYED_CLOSE];
 
 const OPTION_CHAIN_SIZE = 12;
 const QUOTE_EMIT_THROTTLE_MS = 250;
@@ -102,7 +108,25 @@ const NON_FATAL_NOTICE_CODES = [300, 10167];
  */
 const IB_MARKET_DATA_TYPE_DELAYED_FROZEN = 4;
 
-function configuredMarketDataType(): number {
+const IB_MARKET_DATA_TYPE_REALTIME = 1;
+
+/** Modes that place orders against a real-money account. */
+export function isLiveMoneyMode(mode: TradingMode): boolean {
+  return mode === 'ib-live' || mode === 'ib-live-confirm';
+}
+
+/**
+ * Market data type for a mode.
+ *
+ * Live-money modes are pinned to real-time. Pricing a real order off a
+ * 15-minute-old quote is worse than not trading: the delayed underlying and
+ * the delayed chain need not even be stale by the same amount, so PAS can
+ * land on the wrong side of spot entirely. If real-time is unavailable in a
+ * live mode the adapter reports it rather than quietly degrading, and the
+ * EXVEST_IB_MARKET_DATA_TYPE override is deliberately ignored there.
+ */
+export function marketDataTypeForMode(mode: TradingMode): number {
+  if (isLiveMoneyMode(mode)) return IB_MARKET_DATA_TYPE_REALTIME;
   // Reached via globalThis: this module sits under src/ and is typechecked by
   // the renderer config, which has no Node types (it never runs there).
   const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
@@ -179,6 +203,13 @@ export class IbBrokerAdapter implements BrokerAdapter {
    */
   private activeMktDataReqIds = new Set<number>();
   private warnedEmptyQuotes = false;
+  private sawUnderlyingLast = false;
+  /**
+   * Set when a live-money session is not receiving real-time data. Orders are
+   * refused while it holds: a limit priced off a stale quote is a real-money
+   * mistake, and the correct behaviour is to stop rather than approximate.
+   */
+  private liveDataUnsafeReason: string | null = null;
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
   private orderIdByReqOrderId = new Map<number, string>();
@@ -221,6 +252,13 @@ export class IbBrokerAdapter implements BrokerAdapter {
       // whole session to delayed-frozen and re-issue the subscriptions.
       // (Frozen so a closed market still returns the last snapshot rather
       // than nothing at all.)
+      if (MARKET_DATA_ENTITLEMENT_CODES.includes(errCode) && isLiveMoneyMode(this.opts.mode)) {
+        this.markDataUnsafeForLiveTrading(
+          `no real-time market-data entitlement (IB ${errCode}: ${error?.message ?? ''})`
+        );
+        return;
+      }
+
       if (MARKET_DATA_ENTITLEMENT_CODES.includes(errCode) && !this.delayedDataFallbackDone) {
         this.delayedDataFallbackDone = true;
         log.warn('no live market-data entitlement — retrying with delayed-frozen data (IB market data type 4)');
@@ -268,6 +306,11 @@ export class IbBrokerAdapter implements BrokerAdapter {
     // 4 delayed-frozen. Tells you at a glance which data you are looking at.
     this.ib.on(EventName.marketDataType, (reqId: number, type: number) => {
       log.info(`market data type for reqId ${reqId}: ${type} (1=live 2=frozen 3=delayed 4=delayed-frozen)`);
+      if (type !== IB_MARKET_DATA_TYPE_REALTIME && isLiveMoneyMode(this.opts.mode)) {
+        this.markDataUnsafeForLiveTrading(
+          `IB is serving market data type ${type} (not real-time) for reqId ${reqId}`
+        );
+      }
     });
 
     this.ib.on(EventName.disconnected, () => {
@@ -305,7 +348,12 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
     this.ib.on(EventName.tickPrice, (reqId: number, field: TickType, value: number) => {
       if (reqId === this.underlyingReqId) {
-        if (PRICE_TICKS.includes(field as number)) {
+        const isLast = LAST_TICKS.includes(field as number);
+        // Prior close seeds the strike window before the first trade of the
+        // session, but must never overwrite a real traded price.
+        const isSeedClose = CLOSE_TICKS.includes(field as number) && !this.sawUnderlyingLast;
+        if ((isLast || isSeedClose) && value > 0) {
+          if (isLast) this.sawUnderlyingLast = true;
           this.underlyingPrice = value;
           this.emitter.emit('underlyingTick', { conId: this.underlyingConId, price: value, time: Date.now() });
           this.maybeSubscribeOptionChain();
@@ -381,6 +429,21 @@ export class IbBrokerAdapter implements BrokerAdapter {
     }, QUOTE_EMIT_THROTTLE_MS);
   }
 
+  /**
+   * Records that a live-money session cannot be priced safely, reports it, and
+   * latches until the adapter reconnects. Idempotent so repeated per-contract
+   * notices do not spam the UI.
+   */
+  private markDataUnsafeForLiveTrading(reason: string): void {
+    if (this.liveDataUnsafeReason) return;
+    this.liveDataUnsafeReason = reason;
+    const message =
+      `Real-time market data is unavailable in ${this.opts.mode} mode: ${reason}. ` +
+      'Order placement is disabled — delayed quotes must not price real-money orders.';
+    log.error(message);
+    this.emitter.emit('error', { message });
+  }
+
   private nextId(): number {
     return this.nextReqId++;
   }
@@ -391,6 +454,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
       `connecting to ${host}:${this.opts.port} (clientId ${this.opts.clientId ?? 0}, mode ${this.opts.mode}, timeout ${CONNECT_TIMEOUT_MS}ms)`
     );
 
+    this.liveDataUnsafeReason = null;
     const info = await new Promise<ConnectionInfo>((resolve) => {
       const timeout = setTimeout(() => {
         log.error(
@@ -405,10 +469,14 @@ export class IbBrokerAdapter implements BrokerAdapter {
         // (e.g. a market-data entitlement notice) get logged as "connect failed".
         this.ib.removeListener(EventName.error, onError);
         log.info(`connected to ${host}:${this.opts.port}`);
-        const mdType = configuredMarketDataType();
-        log.info(`requesting market data type ${mdType} (live where entitled, delayed otherwise)`);
+        const mdType = marketDataTypeForMode(this.opts.mode);
+        if (isLiveMoneyMode(this.opts.mode)) {
+          log.info(`requesting real-time market data only (mode ${this.opts.mode} trades real money)`);
+        } else {
+          log.info(`requesting market data type ${mdType} (live where entitled, delayed otherwise)`);
+        }
         this.ib.reqMarketDataType(mdType);
-        if (mdType !== 1) this.delayedDataFallbackDone = true;
+        if (mdType !== IB_MARKET_DATA_TYPE_REALTIME) this.delayedDataFallbackDone = true;
         this.ib.reqAccountSummary(this.nextId(), 'All', 'AvailableFunds,NetLiquidation,BuyingPower');
         resolve({ mode: this.opts.mode, connected: true, accountId: null });
       });
@@ -479,6 +547,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
   async setUnderlying(symbol: string): Promise<SetUnderlyingResult> {
     this.symbol = symbol;
     this.underlyingConId = 0;
+    this.sawUnderlyingLast = false;
     this.underlyingSessions = [];
     this.allStrikes = [];
     this.nearestExpiry = todayYYYYMMDD();
@@ -727,6 +796,11 @@ export class IbBrokerAdapter implements BrokerAdapter {
   }
 
   async placeOrder(req: PlaceOrderRequest): Promise<OrderState> {
+    if (this.liveDataUnsafeReason) {
+      throw new Error(
+        `Refusing to place a real-money order without real-time market data: ${this.liveDataUnsafeReason}`
+      );
+    }
     const orderId = await new Promise<number>((resolve) => {
       this.ib.once(EventName.nextValidId, (id: number) => resolve(id));
       this.ib.reqIds();
