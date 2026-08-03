@@ -176,7 +176,11 @@ function mapOrderStatus(status: IBOrderStatus | string): OrderStatus {
     case IBOrderStatus.Inactive:
       return 'Inactive';
     default:
-      return 'Draft';
+      // Never 'Draft': that status now means "staged by us, awaiting our
+      // submit" and puts a submit control on the tag. An unrecognised broker
+      // status must not masquerade as something the user can transmit.
+      log.warn(`unmapped IB order status "${status}" — treating as PendingSubmit`);
+      return 'PendingSubmit';
   }
 }
 

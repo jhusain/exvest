@@ -37,7 +37,10 @@ function broadcast(channel: string, payload: unknown) {
 function wireForwarding() {
   adapter.on('underlyingTick', (p) => broadcast('exvest:event:underlyingTick', p));
   adapter.on('optionQuotes', (p) => broadcast('exvest:event:optionQuotes', p));
-  adapter.on('orderUpdate', (p) => broadcast('exvest:event:orderUpdate', p));
+  adapter.on('orderUpdate', (p) => {
+    log.info(`-> renderer orderUpdate ${p.id}: ${p.status} (filled ${p.filled}/${p.filled + p.remaining})`);
+    broadcast('exvest:event:orderUpdate', p);
+  });
   adapter.on('accountUpdate', (p) => broadcast('exvest:event:accountUpdate', p));
   adapter.on('connectionStatus', (p) => {
     log.info(`connectionStatus: connected=${p.connected}${p.reason ? ` reason="${p.reason}"` : ''}`);

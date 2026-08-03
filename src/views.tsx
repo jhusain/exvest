@@ -128,9 +128,21 @@ export function Tag({ x, text, color, onTrash, onSubmit, top, row }: TagInput & 
  */
 export const NEEDS_ACTION_STATUSES: ReadonlySet<string> = new Set(['Draft', 'Held']);
 
-/** Tag/guideline colour for an order, by status. */
+/** Tag/guideline colour name for an order, by status. */
 export function orderTagColor(status: string): 'violet' | 'yellow' {
   return NEEDS_ACTION_STATUSES.has(status) ? 'violet' : 'yellow';
+}
+
+export const ORDER_VIOLET = '#a855f7';
+export const ORDER_YELLOW = '#e6cc00';
+
+/**
+ * Guideline stroke for an order. Every pane that draws an order line uses
+ * this, so the axis, chart and options list cannot drift apart in colour the
+ * way they did when each hardcoded its own.
+ */
+export function orderGuideColor(status: string): string {
+  return NEEDS_ACTION_STATUSES.has(status) ? ORDER_VIOLET : ORDER_YELLOW;
 }
 
 function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: number }) {
@@ -198,7 +210,7 @@ function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: 
             left: t.x,
             top: t.top + TAG_HEIGHT,
             background:
-              t.color === 'yellow' ? '#e6cc00' : t.color === 'violet' ? '#a855f7' : t.color === 'blue' ? '#3b82f6' : t.color === 'green' ? '#22c55e' : t.color === 'red' ? '#ff5454' : '#e5e7eb',
+              t.color === 'yellow' ? ORDER_YELLOW : t.color === 'violet' ? ORDER_VIOLET : t.color === 'blue' ? '#3b82f6' : t.color === 'green' ? '#22c55e' : t.color === 'red' ? '#ff5454' : '#e5e7eb',
             zIndex: 200 + t.row
           }}
         />
@@ -250,7 +262,7 @@ function HistoricalChart() {
             x2={x(o.pas)}
             y1="0"
             y2={height}
-            stroke={NEEDS_ACTION_STATUSES.has(o.status) ? '#a855f7' : '#e6cc00'}
+            stroke={orderGuideColor(o.status)}
             strokeWidth="3"
           />
         ))}
@@ -319,7 +331,7 @@ function OptionsList() {
       <div className="guideline market" style={{ left: x(price) }} />
       <div style={{ position: 'relative', height: options.length * 42 + 20 }}>
         {openOrders.map((oo) => (
-          <div key={'f-open-' + oo.id} className="orderGuideFull" style={{ left: x(oo.pas), background: '#e6cc00' }} />
+          <div key={'f-open-' + oo.id} className="orderGuideFull" style={{ left: x(oo.pas), background: orderGuideColor(oo.status) }} />
         ))}
         {prov && <div className="orderGuideFull" style={{ left: x(prov.pas), background: '#3b82f6' }} />}
         {options.map((o, idx) => {
@@ -340,7 +352,7 @@ function OptionsList() {
               {openOrders
                 .filter((oo) => oo.optionId === o.id)
                 .map((oo) => (
-                  <div key={'g-open-' + oo.id} className="orderGuide" style={{ left: x(oo.pas), background: '#e6cc00' }} />
+                  <div key={'g-open-' + oo.id} className="orderGuide" style={{ left: x(oo.pas), background: orderGuideColor(oo.status) }} />
                 ))}
               {prov && prov.optionId === o.id && <div className="orderGuide" style={{ left: x(prov.pas), background: '#3b82f6' }} />}
               <div className="optText">
