@@ -94,6 +94,17 @@ const MARKET_DATA_ENTITLEMENT_CODES = [354, 10089, 10090, 10168];
  */
 const NON_FATAL_NOTICE_CODES = [300, 10167];
 /**
+ * Order-scoped codes that are advisory, NOT rejections: the order is still
+ * live at the broker.
+ *  - 163: the price breaches the Percentage constraint in TWS's Precautionary
+ *    Settings, so TWS holds it for manual confirmation. Still an order.
+ *  - 10349: TWS applied a TIF from an order preset. Purely informational.
+ *  - 399: generic "order message" warning attached to an accepted order.
+ * Treating these as rejections drops the order from the UI while it is
+ * sitting live in TWS — the worst possible discrepancy for the operator.
+ */
+const ORDER_ADVISORY_CODES = [163, 399, 10349];
+/**
  * reqMarketDataType(4) — "delayed-frozen": enables delayed data, and the last
  * snapshot when the market is closed. Per the TWS API, "by default only
  * real-time (1) market data is enabled", and each higher type *enables*
@@ -292,6 +303,22 @@ export class IbBrokerAdapter implements BrokerAdapter {
         return;
       }
       const pending = this.pendingOrders.get(reqId);
+
+      // Advisory: surface it, but leave the order pending so the openOrder /
+      // orderStatus events resolve it normally.
+      if (pending && ORDER_ADVISORY_CODES.includes(errCode)) {
+        log.warn(`order ${reqId} advisory ${errCode}: ${error?.message ?? ''}`);
+        this.emitter.emit('error', {
+          code: errCode,
+          message:
+            errCode === 163
+              ? `Order ${reqId} is held by TWS for manual confirmation: ${error?.message ?? ''} ` +
+                'It has NOT been cancelled — confirm or cancel it in TWS, or relax the Percentage constraint under Global Configuration > Presets > Precautionary Settings.'
+              : `Order ${reqId}: ${error?.message ?? ''}`
+        });
+        return;
+      }
+
       if (pending) {
         this.pendingOrders.delete(reqId);
         const state: OrderState = {
