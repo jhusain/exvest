@@ -201,7 +201,9 @@ function HistoricalChart() {
   const minTs = latestTs - windowMin * 60 * 1000;
   const pts = history.filter((h) => h.t >= minTs);
 
-  const y = (t: number) => height - ((t - minTs) / (windowMin * 60 * 1000)) * height;
+  // Newest at the bottom: time runs downward, so the most recent point sits
+  // next to the options list rather than at the top of the pane.
+  const y = (t: number) => ((t - minTs) / (windowMin * 60 * 1000)) * height;
   const path = pts.map((p, i) => `${i ? 'L' : 'M'} ${x(p.p)} ${y(p.t)}`).join(' ');
 
   const bounds = useAppSelector(selectOptionPasBounds);
@@ -439,16 +441,44 @@ function LiveOrderConfirmModal() {
   );
 }
 
-function ToastHost() {
-  const message = useAppSelector(selectToast).message;
+/** How long a toast stays up before dismissing itself. */
+const TOAST_TTL_MS = 12000;
+
+function Toast({ id, message }: { id: string; message: string }) {
   const dispatch = useAppDispatch();
+  const [leaving, setLeaving] = useState(false);
+
   useEffect(() => {
-    if (!message) return;
-    const id = setTimeout(() => dispatch(actions.clearToast()), 4000);
-    return () => clearTimeout(id);
-  }, [message, dispatch]);
-  if (!message) return null;
-  return <div className="toast">{message}</div>;
+    // Play the exit animation before the item leaves the store, so the toast
+    // slides out rather than vanishing.
+    const hide = setTimeout(() => setLeaving(true), TOAST_TTL_MS);
+    const remove = setTimeout(() => dispatch(actions.dismissToast(id)), TOAST_TTL_MS + 200);
+    return () => {
+      clearTimeout(hide);
+      clearTimeout(remove);
+    };
+  }, [id, dispatch]);
+
+  return (
+    <div className={`toast${leaving ? ' leaving' : ''}`} role="status">
+      <span className="toastMsg">{message}</span>
+      <button className="toastClose" aria-label="Dismiss" onClick={() => dispatch(actions.dismissToast(id))}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+function ToastHost() {
+  const items = useAppSelector(selectToast).items;
+  if (!items.length) return null;
+  return (
+    <div className="toastHost">
+      {items.map((t) => (
+        <Toast key={t.id} id={t.id} message={t.message} />
+      ))}
+    </div>
+  );
 }
 
 /** === Root / bootstrap === */

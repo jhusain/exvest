@@ -237,19 +237,35 @@ const connectionSlice = createSlice({
   }
 });
 
-interface ToastState {
-  message: string | null;
+export interface ToastItem {
+  id: string;
+  message: string;
 }
+
+interface ToastState {
+  /** Newest last; the host renders them stacked from the bottom-right. */
+  items: ToastItem[];
+}
+
+let toastSeq = 0;
+
+/** Cap on simultaneously visible toasts. */
+const MAX_VISIBLE_TOASTS = 5;
 
 const toastSlice = createSlice({
   name: 'toast',
-  initialState: { message: null } as ToastState,
+  initialState: { items: [] } as ToastState,
   reducers: {
     showToast(s, a: PayloadAction<string>) {
-      s.message = a.payload;
+      s.items.push({ id: `t${++toastSeq}`, message: a.payload });
+      // A burst of per-contract errors should not bury the screen.
+      if (s.items.length > MAX_VISIBLE_TOASTS) s.items.splice(0, s.items.length - MAX_VISIBLE_TOASTS);
+    },
+    dismissToast(s, a: PayloadAction<string>) {
+      s.items = s.items.filter((t) => t.id !== a.payload);
     },
     clearToast(s) {
-      s.message = null;
+      s.items = [];
     }
   }
 });

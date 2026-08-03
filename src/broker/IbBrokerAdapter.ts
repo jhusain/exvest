@@ -205,6 +205,18 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private warnedEmptyQuotes = false;
   private sawUnderlyingLast = false;
   /**
+   * True once the underlying price is being sourced from the option ticks'
+   * embedded undPrice, after which the dedicated underlying subscription is
+   * ignored so the two cannot drift apart.
+   */
+  private underlyingFromOptions = false;
+  /**
+   * Whether to take the underlying price from the option ticks rather than
+   * its own subscription. Off for live-money modes, which must price against
+   * their own real-time underlying feed.
+   */
+  private readonly preferOptionEmbeddedUnderlying: boolean;
+  /**
    * Set when a live-money session is not receiving real-time data. Orders are
    * refused while it holds: a limit priced off a stale quote is a real-money
    * mistake, and the correct behaviour is to stop rather than approximate.
@@ -216,6 +228,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
   constructor(private opts: IbBrokerAdapterOptions) {
     this.ib = new IBApi({ host: opts.host ?? '127.0.0.1', port: opts.port, clientId: opts.clientId ?? 0 });
+    this.preferOptionEmbeddedUnderlying = !isLiveMoneyMode(opts.mode);
     this.wireEvents();
   }
 
@@ -348,6 +361,9 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
     this.ib.on(EventName.tickPrice, (reqId: number, field: TickType, value: number) => {
       if (reqId === this.underlyingReqId) {
+        // Once the option ticks are supplying the underlying price, ignore
+        // this feed entirely: mixing the two reintroduces the staleness skew.
+        if (this.underlyingFromOptions) return;
         const isLast = LAST_TICKS.includes(field as number);
         // Prior close seeds the strike window before the first trade of the
         // session, but must never overwrite a real traded price.
@@ -376,12 +392,36 @@ export class IbBrokerAdapter implements BrokerAdapter {
       this.scheduleQuoteFlush();
     });
 
-    this.ib.on(EventName.tickOptionComputation, (reqId: number, _field, _attrib, _iv, delta) => {
-      const pending = this.optionsByReqId.get(reqId);
-      if (!pending || delta === undefined) return;
-      pending.delta = delta;
-      this.scheduleQuoteFlush();
-    });
+    this.ib.on(
+      EventName.tickOptionComputation,
+      (reqId: number, _field, _attrib, _iv, delta, _optPrice, _pvDiv, _gamma, _vega, _theta, undPrice) => {
+        const pending = this.optionsByReqId.get(reqId);
+        if (!pending) return;
+        if (delta !== undefined) pending.delta = delta;
+
+        // IB reports the underlying price it used to compute this option's
+        // greeks. On a delayed feed that is the *same vintage* as the quote,
+        // whereas the separate underlying subscription ticks on its own
+        // schedule — the two can be minutes apart, which is what put PAS on
+        // the wrong side of spot. Prefer this in paper/sim; live-money modes
+        // stay on the dedicated real-time subscription (see
+        // preferOptionEmbeddedUnderlying).
+        if (this.preferOptionEmbeddedUnderlying && undPrice !== undefined && undPrice > 0) {
+          this.underlyingFromOptions = true;
+          if (undPrice !== this.underlyingPrice) {
+            this.underlyingPrice = undPrice;
+            this.emitter.emit('underlyingTick', {
+              conId: this.underlyingConId,
+              price: undPrice,
+              time: Date.now()
+            });
+          }
+          this.maybeSubscribeOptionChain();
+        }
+
+        if (delta !== undefined) this.scheduleQuoteFlush();
+      }
+    );
 
     this.ib.on(EventName.orderStatus, (orderId: number, status: IBOrderStatus, filled: number, remaining: number, avgFillPrice: number) => {
       const id = String(orderId);
@@ -548,6 +588,7 @@ export class IbBrokerAdapter implements BrokerAdapter {
     this.symbol = symbol;
     this.underlyingConId = 0;
     this.sawUnderlyingLast = false;
+    this.underlyingFromOptions = false;
     this.underlyingSessions = [];
     this.allStrikes = [];
     this.nearestExpiry = todayYYYYMMDD();
