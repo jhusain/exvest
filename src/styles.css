@@ -3,17 +3,49 @@
 html,body,#root{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
 
 .app{position:relative;height:100%}
+/* The mode indicator outlines the header rather than the whole viewport:
+   a full-viewport outline crowds the chart edges, and the header is always
+   visible anyway. Inset so it never affects layout. */
+.app.mode-paper .hdr{box-shadow:inset 0 0 0 2px var(--ok)}
+.app.mode-live-confirm .hdr{box-shadow:inset 0 0 0 2px var(--bad)}
+.app.mode-live .hdr{box-shadow:inset 0 0 0 2px var(--bad);animation:flashBorder 1s step-start infinite}
+@keyframes flashBorder{50%{box-shadow:inset 0 0 0 2px transparent}}
+
+.modalOverlay{position:fixed;inset:0;background:#000000aa;display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal{background:#111;border:1px solid var(--bad);border-radius:8px;padding:20px 24px;max-width:420px}
+.modal h3{margin:0 0 10px 0;color:var(--bad)}
+.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.modal button{padding:6px 14px;border-radius:6px;border:1px solid #2a2a2a;background:#1a1a1a;color:var(--fg);cursor:pointer}
+.modal button.confirm{border-color:var(--bad);color:var(--bad)}
+/* Toasts stack upward from the bottom-right. Items are stored oldest-first,
+   so a plain column puts the newest nearest the corner and pushes the older
+   ones up as it arrives. pointer-events stay off on the host so the column
+   never blocks the chart underneath; each toast re-enables them. */
+.toastHost{position:fixed;right:16px;bottom:76px;z-index:1000;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;max-width:min(420px,60vw)}
+.toast{display:flex;align-items:flex-start;gap:10px;background:#1a1a1a;border:1px solid #2a2a2a;padding:8px 10px 8px 14px;border-radius:6px;box-shadow:0 4px 14px #0008;pointer-events:auto;animation:toastIn .18s ease-out}
+.toast.leaving{animation:toastOut .18s ease-in forwards}
+.toastMsg{flex:1;min-width:0;overflow-wrap:anywhere}
+.toastClose{background:none;border:0;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}
+.toastClose:hover{color:var(--fg)}
+@keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(12px)}}
 .hdr{position:absolute;left:0;right:0;top:0;height:44px;display:flex;gap:8px;align-items:center;padding:8px 10px;background:#000;border-bottom:1px solid #111}
 .hdr input[type=text]{background:#111;border:1px solid #202020;color:var(--fg);padding:6px 8px;border-radius:6px;width:180px}
 .hdr .pill{padding:4px 8px;background:#111;border:1px solid #202020;border-radius:999px}
 .hdr .spacer{flex:1}
 
-.axis{position:absolute;left:0;right:0;top:44px;height:56px;border-bottom:1px solid #121212;background:#090909}
+/* The three panes below share one horizontal coordinate space (the PAS axis),
+   so their content boxes must be identical widths. .opts scrolls, and a
+   scrollbar appearing there would otherwise narrow only that pane and skew
+   its gridlines against the axis and chart. Reserving a stable gutter in all
+   three keeps them aligned whether or not a scrollbar is showing. */
+.axis,.chart,.opts{scrollbar-gutter:stable}
+.axis{position:absolute;left:0;right:0;top:44px;height:56px;border-bottom:1px solid #121212;background:#090909;overflow-y:auto}
 .split{position:absolute;left:0;right:0;top:100px;bottom:64px;display:flex;flex-direction:column}
 .split .pane{position:relative;min-height:0}
 .divider{height:8px;background:#111;cursor:row-resize;border-top:1px solid #161616;border-bottom:1px solid #000}
 
-.chart{position:relative;width:100%;height:100%}
+.chart{position:relative;width:100%;height:100%;overflow-y:auto}
 .opts{position:relative;overflow-y:auto;overflow-x:hidden;background:#080808;height:100%}
 
 .bottom{position:absolute;left:0;right:0;bottom:0;height:64px;background:#000;border-top:1px solid #111;display:flex;align-items:center;justify-content:center}
@@ -30,7 +62,13 @@ html,body,#root{height:100%;margin:0;background:var(--bg);color:var(--fg);font:1
 .tag.white{border-color:#e5e7eb;color:#e5e7eb}
 .tag.green{border-color:var(--ok);color:var(--ok)}
 .tag.red{border-color:var(--bad);color:var(--bad)}
+/* Orders awaiting action (Draft or Held). Violet is unused elsewhere, so it
+   never collides with the red/green price-direction tags or the yellow of a
+   live working order. */
+.tag.violet{border-color:#a855f7;color:#d8b4fe}
 .tag .trash{margin-left:8px;cursor:pointer;opacity:.85}
+.tag .submit{margin-left:8px;cursor:pointer;opacity:.9;color:#4ade80;font-weight:700}
+.tag .submit:hover{opacity:1}
 
 .optRow{position:absolute;height:34px;left:0;right:0;margin:8px 0;border-radius:6px;display:flex;align-items:center}
 .optBox{position:absolute;height:24px;border-radius:5px;border:1px solid #2a2a2a;background:#131313;z-index:1}

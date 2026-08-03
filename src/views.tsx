@@ -1,0 +1,662 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Provider } from 'react-redux';
+import './styles.css';
+import {
+  store, actions, setBroker,
+  makeGridlinesPx, makePasToX,
+  selectMarket, selectOrders, selectOptionPasBounds, selectFilteredOptions, selectPriceRange,
+  selectConnection, selectSession, selectToast, selectSettings
+} from './logic';
+import type { OptionsWithPas } from './logic';
+import { TAG_ROW_H, TAG_HEIGHT, layoutTagsGrouped, priceColor, clamp, type TagInput } from './shared/pas';
+import { createBroker } from './broker/createBroker';
+import { SimBrokerAdapter } from './broker/SimBrokerAdapter';
+import { MODE_INFO } from './shared/modes';
+import { formatDuration, msUntilExchangeClose, msUntilSessionClose } from './shared/marketClock';
+import type { BrokerAdapter } from './shared/types';
+import { useAppDispatch, useAppSelector } from './hooks';
+
+function useResizeObserver() {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [rect, setRect] = useState({ width: 1, height: 1 });
+  useEffect(() => {
+    if (!ref.current) return;
+    const RO: typeof ResizeObserver =
+      window.ResizeObserver ||
+      (class {
+        cb: ResizeObserverCallback;
+        constructor(cb: ResizeObserverCallback) {
+          this.cb = cb;
+        }
+        observe() {
+          const r = ref.current!.getBoundingClientRect();
+          this.cb([{ contentRect: r } as ResizeObserverEntry], this as unknown as ResizeObserver);
+        }
+        disconnect() {}
+        unobserve() {}
+      } as unknown as typeof ResizeObserver);
+    const obs = new RO((entries) => {
+      const r = entries[0].contentRect;
+      setRect({ width: r.width || 1, height: r.height || 1 });
+    });
+    obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+  return [ref, rect] as const;
+}
+
+/** === Header === */
+function Header() {
+  const price = useAppSelector((s) => selectMarket(s).price);
+  const cash = useAppSelector((s) => selectOrders(s).availableCash);
+  const symbol = useAppSelector((s) => selectMarket(s).symbol);
+  const expiry = useAppSelector((s) => selectMarket(s).expiry);
+  const expiryIsToday = useAppSelector((s) => selectMarket(s).expiryIsToday);
+  const connection = useAppSelector(selectConnection);
+  const dispatch = useAppDispatch();
+  const [sym, setSym] = useState(symbol);
+  useEffect(() => setSym(symbol), [symbol]);
+
+  // Time to the close of the *exchange* session. Prefers the broker's own
+  // schedule (which knows about holidays and half days); falls back to
+  // assuming a regular 09:30-16:00 New York day when none is published.
+  const sessions = useAppSelector((s) => selectMarket(s).sessions);
+  const [remaining, setRemaining] = useState('--:--:--');
+  useEffect(() => {
+    const tick = () => {
+      const fromBroker = sessions.length ? msUntilSessionClose(sessions) : null;
+      if (sessions.length) {
+        // null => no session covers now, i.e. the market is genuinely shut.
+        setRemaining(fromBroker == null ? 'CLOSED' : formatDuration(fromBroker));
+      } else {
+        const ms = msUntilExchangeClose();
+        setRemaining(ms > 0 ? formatDuration(ms) : 'CLOSED');
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [sessions]);
+
+  const modeInfo = MODE_INFO[connection.mode];
+  const expiryText = expiry ? (expiryIsToday ? 'TODAY' : expiry) : '--';
+
+  return (
+    <div className="hdr">
+      <div className="pill">Acct {connection.accountId ?? '…'}</div>
+      <div className="pill" title={connection.fellBackFrom ? `Fell back from ${connection.fellBackFrom}: ${connection.reason ?? ''}` : undefined}>
+        {modeInfo.label}
+        {connection.fellBackFrom ? ' (IB Gateway unavailable)' : ''}
+      </div>
+      <button className="pill" onClick={() => alert('Settings (v0 placeholder)')}>⚙️ Settings</button>
+      <input
+        value={sym}
+        onChange={(e) => setSym(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') dispatch(actions.setSymbol(sym));
+        }}
+        placeholder="Symbol"
+      />
+      <div className="pill">Exp: {expiryText}</div>
+      <div className="spacer" />
+      <div className="pill">${price.toFixed(2)}</div>
+      <div className="pill">${cash.toLocaleString()} cash</div>
+      <div className="pill">{remaining}</div>
+    </div>
+  );
+}
+
+/** === Price Axis (dynamic height, stacked tags, guidelines from tag bottom) === */
+export function Tag({ x, text, color, onTrash, onSubmit, top, row }: TagInput & { top: number; row: number }) {
+  return (
+    <div className={`tag ${color}`} style={{ left: x, top, zIndex: 200 + (row || 0) }}>
+      {text}{' '}
+      {onSubmit && (
+        <span className="submit" title="Transmit this order" onClick={onSubmit}>
+          ✓
+        </span>
+      )}
+      {onTrash && <span className="trash" onClick={onTrash}>🗑️</span>}
+    </div>
+  );
+}
+
+/**
+ * Orders awaiting action get their own colour. Deliberately not red or green:
+ * those already mean "price moved down/up" on the underlying tag, and not
+ * yellow, which is a live working order.
+ */
+export const NEEDS_ACTION_STATUSES: ReadonlySet<string> = new Set(['Draft', 'Held']);
+
+/** Tag/guideline colour name for an order, by status. */
+export function orderTagColor(status: string): 'violet' | 'yellow' {
+  return NEEDS_ACTION_STATUSES.has(status) ? 'violet' : 'yellow';
+}
+
+export const ORDER_VIOLET = '#a855f7';
+export const ORDER_YELLOW = '#e6cc00';
+
+/**
+ * Guideline stroke for an order. Every pane that draws an order line uses
+ * this, so the axis, chart and options list cannot drift apart in colour the
+ * way they did when each hardcoded its own.
+ */
+export function orderGuideColor(status: string): string {
+  return NEEDS_ACTION_STATUSES.has(status) ? ORDER_VIOLET : ORDER_YELLOW;
+}
+
+function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: number }) {
+  const dispatch = useAppDispatch();
+  const [ref, { width }] = useResizeObserver();
+  const gridSel = useMemo(makeGridlinesPx, []);
+  const { values, toPx } = useAppSelector((s) => gridSel(s, width));
+  const pasSel = useMemo(makePasToX, []);
+  const pas2x = useAppSelector((s) => pasSel(s, width));
+
+  const bounds = useAppSelector(selectOptionPasBounds);
+  const price = useAppSelector((s) => selectMarket(s).price);
+  const hist = useAppSelector((s) => selectMarket(s).history);
+  const prev = hist.length > 1 ? hist[hist.length - 2].p : hist[0]?.p ?? null;
+  const pClr = priceColor(price, prev);
+
+  const prov = useAppSelector((s) => selectOrders(s).provisional);
+  const openOrders = useAppSelector((s) => selectOrders(s).openOrders);
+
+  const group0: TagInput[] = [];
+  // Labelled, because otherwise these read as duplicate price tags: they are
+  // the low/high ends of the option PAS range, which sits close to the
+  // underlying price and so renders right next to it.
+  if (bounds.min != null) group0.push({ key: 'min', x: pas2x(bounds.min), text: `min $${bounds.min}`, color: 'white' });
+  if (bounds.max != null) group0.push({ key: 'max', x: pas2x(bounds.max), text: `max $${bounds.max}`, color: 'white' });
+
+  const group1: TagInput[] = [{ key: 'm', x: pas2x(price), text: `$${price.toFixed(2)}`, color: pClr }];
+
+  const group2: TagInput[] = [];
+  openOrders.forEach((o) => {
+    const needsAction = NEEDS_ACTION_STATUSES.has(o.status);
+    group2.push({
+      key: 'o-' + o.id,
+      x: pas2x(o.pas),
+      text: `${o.qty} × $${o.pas.toFixed(2)}${needsAction ? ` · ${o.status.toUpperCase()}` : ''}`,
+      color: orderTagColor(o.status),
+      // Only a Draft can be submitted from here. A Held order needs a
+      // confirmation only the broker's own UI can give, so it gets the same
+      // attention colour but no button that would fail silently.
+      onSubmit: o.status === 'Draft' ? () => dispatch(actions.transmitOpenOrder(o.id)) : undefined,
+      onTrash: () => dispatch(actions.cancelOpenOrder(o.id))
+    });
+  });
+  if (prov) group2.push({ key: 'p', x: pas2x(prov.pas), text: `${prov.qty} × $${prov.pas.toFixed(2)}`, color: 'blue' });
+
+  const { placed: tags, totalRows } = layoutTagsGrouped([group0, group1, group2], width);
+  const needH = Math.max(56, 6 + totalRows * TAG_ROW_H + 6);
+  useEffect(() => {
+    if (onHeight && needH !== axisH) onHeight(needH);
+  }, [needH, axisH, onHeight]);
+
+  return (
+    <div className="axis" ref={ref} style={{ height: axisH }}>
+      {values.map((v) => (
+        <React.Fragment key={v}>
+          <div className="gridline" style={{ left: toPx(v) }} />
+          <div className="label" style={{ left: toPx(v) }}>${v}</div>
+        </React.Fragment>
+      ))}
+      {tags.map((t) => (
+        <div
+          key={t.key + '-g'}
+          className="tagGuide"
+          style={{
+            left: t.x,
+            top: t.top + TAG_HEIGHT,
+            background:
+              t.color === 'yellow' ? ORDER_YELLOW : t.color === 'violet' ? ORDER_VIOLET : t.color === 'blue' ? '#3b82f6' : t.color === 'green' ? '#22c55e' : t.color === 'red' ? '#ff5454' : '#e5e7eb',
+            zIndex: 200 + t.row
+          }}
+        />
+      ))}
+      {tags.map((t) => (
+        <Tag {...t} key={t.key} />
+      ))}
+    </div>
+  );
+}
+
+/** === Historical Chart (SVG) === */
+function HistoricalChart() {
+  const [ref, { width, height }] = useResizeObserver();
+  const pasSel = useMemo(makePasToX, []);
+  const x = useAppSelector((s) => pasSel(s, width));
+  const gridSel = useMemo(makeGridlinesPx, []);
+  const { values, toPx } = useAppSelector((s) => gridSel(s, width));
+
+  const history = useAppSelector((s) => selectMarket(s).history);
+  const latestTs = useAppSelector((s) => selectMarket(s).lastTs);
+  const windowMin = useAppSelector((s) => selectSettings(s).timeWindowMin);
+  const minTs = latestTs - windowMin * 60 * 1000;
+  const pts = history.filter((h) => h.t >= minTs);
+
+  // Newest at the bottom: time runs downward, so the most recent point sits
+  // next to the options list rather than at the top of the pane.
+  const y = (t: number) => ((t - minTs) / (windowMin * 60 * 1000)) * height;
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'} ${x(p.p)} ${y(p.t)}`).join(' ');
+
+  const bounds = useAppSelector(selectOptionPasBounds);
+  const price = useAppSelector((s) => selectMarket(s).price);
+  const openOrders = useAppSelector((s) => selectOrders(s).openOrders);
+  const prov = useAppSelector((s) => selectOrders(s).provisional);
+
+  return (
+    <div className="chart" ref={ref}>
+      <svg width={width} height={height}>
+        {values.map((v) => (
+          <line key={v} x1={toPx(v)} x2={toPx(v)} y1="0" y2={height} stroke="#1a1a1a" strokeWidth="1" />
+        ))}
+        {bounds.min != null && <line x1={x(bounds.min)} x2={x(bounds.min)} y1="0" y2={height} stroke="#777" strokeWidth="2" />}
+        {bounds.max != null && <line x1={x(bounds.max)} x2={x(bounds.max)} y1="0" y2={height} stroke="#777" strokeWidth="2" />}
+        <line x1={x(price)} x2={x(price)} y1="0" y2={height} stroke="#ff5454" strokeWidth="2" />
+        {openOrders.map((o) => (
+          <line
+            key={o.id}
+            x1={x(o.pas)}
+            x2={x(o.pas)}
+            y1="0"
+            y2={height}
+            stroke={orderGuideColor(o.status)}
+            strokeWidth="3"
+          />
+        ))}
+        {prov && <line x1={x(prov.pas)} x2={x(prov.pas)} y1="0" y2={height} stroke="#3b82f6" strokeWidth="3" />}
+        <path d={path} fill="none" stroke="#e5e7eb" strokeWidth="2" />
+      </svg>
+    </div>
+  );
+}
+
+/** === Options list === */
+function OptionsList() {
+  const [ref, { width, height }] = useResizeObserver();
+  const options = useAppSelector(selectFilteredOptions);
+  const pasSel = useMemo(makePasToX, []);
+  const x = useAppSelector((s) => pasSel(s, width));
+  const gridSel = useMemo(makeGridlinesPx, []);
+  const { values, toPx } = useAppSelector((s) => gridSel(s, width));
+  const bounds = useAppSelector(selectOptionPasBounds);
+  const openOrders = useAppSelector((s) => selectOrders(s).openOrders);
+  const prov = useAppSelector((s) => selectOrders(s).provisional);
+  const dispatch = useAppDispatch();
+
+  function beginDrag(option: OptionsWithPas, e: React.MouseEvent) {
+    e.preventDefault();
+    const rect = ref.current!.getBoundingClientRect();
+    const startY = e.clientY;
+    const startQty = 1;
+    const { askPAS, bidPAS } = option;
+    const getPas = (clientX: number) => {
+      const localX = clientX - rect.left;
+      const s = store.getState();
+      const r = selectPriceRange(s);
+      const span = r.max - r.min;
+      return Math.round((r.min + (localX / Math.max(1, width)) * span) * 100) / 100;
+    };
+    const startPas = clamp(getPas(e.clientX), askPAS, bidPAS);
+    const p = { id: `prov-${Date.now()}`, optionId: option.id, limitPrice: option.askPremium, pas: startPas, qty: startQty, strike: option.strike };
+    dispatch(actions.setProvisional(p));
+
+    function mm(ev: MouseEvent) {
+      const dy = ev.clientY - startY;
+      const deltaQty = Math.floor(-dy / (height * 0.05));
+      const qty = Math.max(1, startQty + deltaQty);
+      const pas = clamp(getPas(ev.clientX), askPAS, bidPAS);
+      dispatch(actions.setProvisional({ ...p, qty, pas }));
+    }
+    function up() {
+      window.removeEventListener('mousemove', mm);
+      window.removeEventListener('mouseup', up);
+      dispatch(actions.commitProvisional(option));
+    }
+    window.addEventListener('mousemove', mm);
+    window.addEventListener('mouseup', up);
+  }
+
+  const price = useAppSelector((s) => selectMarket(s).price);
+
+  return (
+    <div className="opts" ref={ref}>
+      {values.map((v) => (
+        <div key={v} className="axisline" style={{ left: toPx(v) }} />
+      ))}
+      <div className="guideline minmax" style={{ left: x(bounds.min || 0) }} />
+      <div className="guideline minmax" style={{ left: x(bounds.max || 0) }} />
+      <div className="guideline market" style={{ left: x(price) }} />
+      <div style={{ position: 'relative', height: options.length * 42 + 20 }}>
+        {openOrders.map((oo) => (
+          <div key={'f-open-' + oo.id} className="orderGuideFull" style={{ left: x(oo.pas), background: orderGuideColor(oo.status) }} />
+        ))}
+        {prov && <div className="orderGuideFull" style={{ left: x(prov.pas), background: '#3b82f6' }} />}
+        {options.map((o, idx) => {
+          const left = x(o.askPAS),
+            right = x(o.bidPAS),
+            w = Math.max(2, right - left);
+          const depth = Math.max(0, Math.min(1, o.bidSize / 24));
+          const bg = Math.floor(18 + depth * 70);
+          const top = idx * 42 + 14;
+          return (
+            <div key={o.id} className="optRow" style={{ top }}>
+              <div
+                className="optBox"
+                style={{ left, width: w, top: 4, background: `rgb(${bg},${bg},${bg})` }}
+                title={`AskPAS:${o.askPAS}  BidPAS:${o.bidPAS}`}
+                onMouseDown={(e) => beginDrag(o, e)}
+              />
+              {openOrders
+                .filter((oo) => oo.optionId === o.id)
+                .map((oo) => (
+                  <div key={'g-open-' + oo.id} className="orderGuide" style={{ left: x(oo.pas), background: orderGuideColor(oo.status) }} />
+                ))}
+              {prov && prov.optionId === o.id && <div className="orderGuide" style={{ left: x(prov.pas), background: '#3b82f6' }} />}
+              <div className="optText">
+                Prob ITM: {o.probITM}%, Bid Size: {o.bidSize}, Strike: ${o.strike.toFixed(2)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** === Price Axis Controller === */
+function PriceAxisController() {
+  const dispatch = useAppDispatch();
+  const [ref, { width }] = useResizeObserver();
+  const fixed = useAppSelector((s) => selectMarket(s).fixedRange);
+  const vp = useAppSelector((s) => selectMarket(s).priceRange);
+  const toPx = (v: number) => ((v - fixed.min) / Math.max(1, fixed.max - fixed.min)) * (width || 1);
+  const fromPx = (px: number) => fixed.min + (px / (width || 1)) * (fixed.max - fixed.min);
+  const [drag, setDrag] = useState<{ which: 'move' | 'left' | 'right'; startX: number; left: number; right: number } | null>(null);
+  const left = toPx(vp.min),
+    right = toPx(vp.max);
+  const vw = Math.max(20, right - left);
+
+  function onDown(e: React.MouseEvent, which: 'move' | 'left' | 'right') {
+    e.preventDefault();
+    setDrag({ which, startX: e.clientX, left, right });
+  }
+  function onMove(e: MouseEvent) {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    if (drag.which === 'move') {
+      let nl = clamp(drag.left + dx, 0, (width || 1) - vw),
+        nr = nl + vw;
+      dispatch(actions.setPriceViewport({ min: Math.round(fromPx(nl) * 100) / 100, max: Math.round(fromPx(nr) * 100) / 100 }));
+    } else if (drag.which === 'left') {
+      let nl = clamp(drag.left + dx, 0, right - 20);
+      dispatch(actions.setPriceViewport({ min: Math.round(fromPx(nl) * 100) / 100, max: vp.max }));
+    } else if (drag.which === 'right') {
+      let nr = clamp(drag.right + dx, left + 20, width || 1);
+      dispatch(actions.setPriceViewport({ min: vp.min, max: Math.round(fromPx(nr) * 100) / 100 }));
+    }
+  }
+  function onUp() {
+    setDrag(null);
+  }
+  useEffect(() => {
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [drag, vp, width]);
+
+  return (
+    <div className="bottom">
+      <div className="pac" ref={ref}>
+        <div className="viewport" style={{ left, width: vw }} onMouseDown={(e) => onDown(e, 'move')}>
+          <div className="handle" style={{ left: -6 }} onMouseDown={(e) => onDown(e, 'left')}></div>
+          <div className="handle" style={{ right: -6 }} onMouseDown={(e) => onDown(e, 'right')}></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** === SplitView (fixed options height; chart flex) === */
+function SplitView({ topOffset }: { topOffset: number }) {
+  const [optsH, setOptsH] = useState(220);
+  return (
+    <div className="split" style={{ top: topOffset }}>
+      <div className="pane" style={{ flex: 1 }}>
+        <HistoricalChart />
+      </div>
+      <div
+        className="divider"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const container = e.currentTarget.parentElement!;
+          const startY = e.clientY;
+          const startH = (e.currentTarget.nextSibling as HTMLElement).getBoundingClientRect().height;
+          const containerH = container.getBoundingClientRect().height;
+          const dividerH = e.currentTarget.getBoundingClientRect().height || 8;
+          const MIN_CHART = 100,
+            MIN_OPT = 120;
+          function mm(ev: MouseEvent) {
+            const dy = ev.clientY - startY;
+            let newH = startH - dy;
+            const maxH = Math.max(MIN_OPT, containerH - MIN_CHART - dividerH);
+            newH = clamp(newH, MIN_OPT, maxH);
+            setOptsH(newH);
+          }
+          function up() {
+            window.removeEventListener('mousemove', mm);
+            window.removeEventListener('mouseup', up);
+          }
+          window.addEventListener('mousemove', mm);
+          window.addEventListener('mouseup', up);
+        }}
+      />
+      <div className="pane" style={{ height: optsH }}>
+        <OptionsList />
+      </div>
+    </div>
+  );
+}
+
+/** === Live-order confirmation modal (mode 4, first order of the session) === */
+function LiveOrderConfirmModal() {
+  const pending = useAppSelector((s) => selectSession(s).pendingLiveConfirm);
+  const dispatch = useAppDispatch();
+  if (!pending) return null;
+  return (
+    <div className="modalOverlay">
+      <div className="modal">
+        <h3>Confirm real order</h3>
+        <p>
+          This will place a real order with real money: sell {pending.qty} put(s) on {pending.optionId}.
+        </p>
+        <div className="actions">
+          <button onClick={() => dispatch(actions.cancelPendingLiveOrder())}>Cancel</button>
+          <button className="confirm" onClick={() => dispatch(actions.confirmPendingLiveOrder())}>Place real order</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** How long a toast stays up before dismissing itself. */
+const TOAST_TTL_MS = 12000;
+
+function Toast({ id, message }: { id: string; message: string }) {
+  const dispatch = useAppDispatch();
+  const [leaving, setLeaving] = useState(false);
+
+  useEffect(() => {
+    // Play the exit animation before the item leaves the store, so the toast
+    // slides out rather than vanishing.
+    const hide = setTimeout(() => setLeaving(true), TOAST_TTL_MS);
+    const remove = setTimeout(() => dispatch(actions.dismissToast(id)), TOAST_TTL_MS + 200);
+    return () => {
+      clearTimeout(hide);
+      clearTimeout(remove);
+    };
+  }, [id, dispatch]);
+
+  return (
+    <div className={`toast${leaving ? ' leaving' : ''}`} role="status">
+      <span className="toastMsg">{message}</span>
+      <button className="toastClose" aria-label="Dismiss" onClick={() => dispatch(actions.dismissToast(id))}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+function ToastHost() {
+  const items = useAppSelector(selectToast).items;
+  if (!items.length) return null;
+  return (
+    <div className="toastHost">
+      {items.map((t) => (
+        <Toast key={t.id} id={t.id} message={t.message} />
+      ))}
+    </div>
+  );
+}
+
+/** === Root / bootstrap === */
+function RootApp() {
+  const [axisH, setAxisH] = useState(56);
+  const dispatch = useAppDispatch();
+  const connection = useAppSelector(selectConnection);
+  const symbol = useAppSelector((s) => selectMarket(s).symbol);
+  const brokerRef = useRef<BrokerAdapter | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let activeBroker: BrokerAdapter | null = null;
+    let unsubs: (() => void)[] = [];
+    let initTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function attach(broker: BrokerAdapter) {
+      activeBroker = broker;
+      brokerRef.current = broker;
+      setBroker(broker);
+      unsubs = [
+        broker.on('underlyingTick', (t) => dispatch(actions.underlyingTick({ price: t.price, time: t.time }))),
+        broker.on('optionQuotes', (q) => dispatch(actions.optionQuotes(q))),
+        broker.on('orderUpdate', (o) => dispatch(actions.applyOrderUpdate(o))),
+        broker.on('accountUpdate', (a) => dispatch(actions.applyAccountUpdate(a))),
+        broker.on('error', (e) => dispatch(actions.applyBrokerError(e))),
+        broker.on('connectionStatus', (info) => {
+          dispatch(actions.connectionStatus(info));
+          if (!info.connected && info.mode !== 'sim-client') {
+            void fallbackToSim(info.mode, info.reason);
+          }
+        })
+      ];
+    }
+
+    /**
+     * Must run only after setUnderlying() has resolved: the adapter derives
+     * its market-data request id there, and subscribing first both orphans
+     * the subscription and leaves the chain without an underlying price.
+     */
+    function startMarketData(broker: BrokerAdapter) {
+      broker.subscribeMarketData();
+      initTimer = setTimeout(() => dispatch(actions.initRanges()), 700);
+    }
+
+    function teardown() {
+      unsubs.forEach((u) => u());
+      unsubs = [];
+      if (initTimer) clearTimeout(initTimer);
+      activeBroker?.unsubscribeMarketData();
+    }
+
+    async function fallbackToSim(fellBackFrom: import('./shared/types').TradingMode, reason?: string) {
+      teardown();
+      const sim = new SimBrokerAdapter();
+      const info = await sim.connect();
+      if (cancelled) return;
+      dispatch(actions.connectionStatus({ ...info, fellBackFrom, reason }));
+      attach(sim);
+      const symbol = store.getState().market.symbol;
+      const setup = await sim.setUnderlying(symbol);
+      if (cancelled) return;
+      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
+      startMarketData(sim);
+    }
+
+    async function bootstrap() {
+      const { broker, connection } = await createBroker();
+      if (cancelled) return;
+      dispatch(actions.connectionStatus(connection));
+      attach(broker);
+      const symbol = store.getState().market.symbol;
+      const setup = await broker.setUnderlying(symbol);
+      if (cancelled) return;
+      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
+      startMarketData(broker);
+    }
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+      teardown();
+    };
+  }, [dispatch]);
+
+  const hasBootstrapped = useRef(false);
+  useEffect(() => {
+    if (!hasBootstrapped.current) {
+      // skip the symbol the store already initialized with; bootstrap() above handles it
+      hasBootstrapped.current = true;
+      return;
+    }
+    const broker = brokerRef.current;
+    if (!broker) return;
+    let cancelled = false;
+    broker.unsubscribeMarketData();
+    void broker.setUnderlying(symbol).then((setup) => {
+      if (cancelled) return;
+      dispatch(actions.setExpiry({ expiry: setup.expiry, expiryIsToday: setup.expiryIsToday, sessions: setup.sessions }));
+      broker.subscribeMarketData();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, dispatch]);
+
+  // Keep the axis fitted to where the option PAS values actually are. They
+  // cluster within about a dollar, so a price-derived span renders the
+  // bid/ask rectangles sub-pixel.
+  const pasBounds = useAppSelector(selectOptionPasBounds);
+  const autoRange = useAppSelector((s) => selectMarket(s).autoRange);
+  const livePrice = useAppSelector((s) => selectMarket(s).price);
+  useEffect(() => {
+    if (!autoRange || pasBounds.min == null || pasBounds.max == null) return;
+    dispatch(actions.fitRangeToPas({ min: pasBounds.min, max: pasBounds.max, price: livePrice }));
+  }, [autoRange, pasBounds.min, pasBounds.max, livePrice, dispatch]);
+
+  const modeInfo = MODE_INFO[connection.mode];
+
+  return (
+    <div className={`app ${modeInfo.borderClass}`}>
+      <Header />
+      <PriceAxis axisH={axisH} onHeight={setAxisH} />
+      <SplitView topOffset={44 + axisH} />
+      <PriceAxisController />
+      <LiveOrderConfirmModal />
+      <ToastHost />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Provider store={store}>
+      <RootApp />
+    </Provider>
+  );
+}
