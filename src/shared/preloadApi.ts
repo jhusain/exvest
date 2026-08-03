@@ -21,6 +21,7 @@ export interface ExvestBridge {
   subscribeMarketData(): void;
   unsubscribeMarketData(): void;
   placeOrder(req: PlaceOrderRequest): Promise<OrderState>;
+  transmitOrder(orderId: string): Promise<void>;
   cancelOrder(orderId: string): Promise<void>;
   getAccountSummary(): Promise<AccountSummary>;
   on<E extends BrokerEvent>(event: E, fn: (payload: BrokerEventMap[E]) => void): () => void;

@@ -107,12 +107,30 @@ function Header() {
 }
 
 /** === Price Axis (dynamic height, stacked tags, guidelines from tag bottom) === */
-function Tag({ x, text, color, onTrash, top, row }: TagInput & { top: number; row: number }) {
+export function Tag({ x, text, color, onTrash, onSubmit, top, row }: TagInput & { top: number; row: number }) {
   return (
     <div className={`tag ${color}`} style={{ left: x, top, zIndex: 200 + (row || 0) }}>
-      {text} {onTrash && <span className="trash" onClick={onTrash}>🗑️</span>}
+      {text}{' '}
+      {onSubmit && (
+        <span className="submit" title="Transmit this order" onClick={onSubmit}>
+          ✓
+        </span>
+      )}
+      {onTrash && <span className="trash" onClick={onTrash}>🗑️</span>}
     </div>
   );
+}
+
+/**
+ * Orders awaiting action get their own colour. Deliberately not red or green:
+ * those already mean "price moved down/up" on the underlying tag, and not
+ * yellow, which is a live working order.
+ */
+export const NEEDS_ACTION_STATUSES: ReadonlySet<string> = new Set(['Draft', 'Held']);
+
+/** Tag/guideline colour for an order, by status. */
+export function orderTagColor(status: string): 'violet' | 'yellow' {
+  return NEEDS_ACTION_STATUSES.has(status) ? 'violet' : 'yellow';
 }
 
 function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: number }) {
@@ -142,15 +160,20 @@ function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: 
   const group1: TagInput[] = [{ key: 'm', x: pas2x(price), text: `$${price.toFixed(2)}`, color: pClr }];
 
   const group2: TagInput[] = [];
-  openOrders.forEach((o) =>
+  openOrders.forEach((o) => {
+    const needsAction = NEEDS_ACTION_STATUSES.has(o.status);
     group2.push({
       key: 'o-' + o.id,
       x: pas2x(o.pas),
-      text: `${o.qty} × $${o.pas.toFixed(2)}`,
-      color: 'yellow',
+      text: `${o.qty} × $${o.pas.toFixed(2)}${needsAction ? ` · ${o.status.toUpperCase()}` : ''}`,
+      color: orderTagColor(o.status),
+      // Only a Draft can be submitted from here. A Held order needs a
+      // confirmation only the broker's own UI can give, so it gets the same
+      // attention colour but no button that would fail silently.
+      onSubmit: o.status === 'Draft' ? () => dispatch(actions.transmitOpenOrder(o.id)) : undefined,
       onTrash: () => dispatch(actions.cancelOpenOrder(o.id))
-    })
-  );
+    });
+  });
   if (prov) group2.push({ key: 'p', x: pas2x(prov.pas), text: `${prov.qty} × $${prov.pas.toFixed(2)}`, color: 'blue' });
 
   const { placed: tags, totalRows } = layoutTagsGrouped([group0, group1, group2], width);
@@ -175,7 +198,7 @@ function PriceAxis({ onHeight, axisH }: { onHeight: (h: number) => void; axisH: 
             left: t.x,
             top: t.top + TAG_HEIGHT,
             background:
-              t.color === 'yellow' ? '#e6cc00' : t.color === 'blue' ? '#3b82f6' : t.color === 'green' ? '#22c55e' : t.color === 'red' ? '#ff5454' : '#e5e7eb',
+              t.color === 'yellow' ? '#e6cc00' : t.color === 'violet' ? '#a855f7' : t.color === 'blue' ? '#3b82f6' : t.color === 'green' ? '#22c55e' : t.color === 'red' ? '#ff5454' : '#e5e7eb',
             zIndex: 200 + t.row
           }}
         />
@@ -221,7 +244,15 @@ function HistoricalChart() {
         {bounds.max != null && <line x1={x(bounds.max)} x2={x(bounds.max)} y1="0" y2={height} stroke="#777" strokeWidth="2" />}
         <line x1={x(price)} x2={x(price)} y1="0" y2={height} stroke="#ff5454" strokeWidth="2" />
         {openOrders.map((o) => (
-          <line key={o.id} x1={x(o.pas)} x2={x(o.pas)} y1="0" y2={height} stroke="#e6cc00" strokeWidth="3" />
+          <line
+            key={o.id}
+            x1={x(o.pas)}
+            x2={x(o.pas)}
+            y1="0"
+            y2={height}
+            stroke={NEEDS_ACTION_STATUSES.has(o.status) ? '#a855f7' : '#e6cc00'}
+            strokeWidth="3"
+          />
         ))}
         {prov && <line x1={x(prov.pas)} x2={x(prov.pas)} y1="0" y2={height} stroke="#3b82f6" strokeWidth="3" />}
         <path d={path} fill="none" stroke="#e5e7eb" strokeWidth="2" />

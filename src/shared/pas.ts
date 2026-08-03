@@ -44,6 +44,12 @@ export interface TagInput {
   text: string;
   color: string;
   onTrash?: () => void;
+  /**
+   * Present only for orders the app itself can submit (status Draft). A Held
+   * order deliberately has no submit action: only the broker's own UI can
+   * clear it, so offering a button here would be a lie.
+   */
+  onSubmit?: () => void;
 }
 
 export interface PlacedTag extends TagInput {

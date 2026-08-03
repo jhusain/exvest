@@ -62,7 +62,13 @@ html,body,#root{height:100%;margin:0;background:var(--bg);color:var(--fg);font:1
 .tag.white{border-color:#e5e7eb;color:#e5e7eb}
 .tag.green{border-color:var(--ok);color:var(--ok)}
 .tag.red{border-color:var(--bad);color:var(--bad)}
+/* Orders awaiting action (Draft or Held). Violet is unused elsewhere, so it
+   never collides with the red/green price-direction tags or the yellow of a
+   live working order. */
+.tag.violet{border-color:#a855f7;color:#d8b4fe}
 .tag .trash{margin-left:8px;cursor:pointer;opacity:.85}
+.tag .submit{margin-left:8px;cursor:pointer;opacity:.9;color:#4ade80;font-weight:700}
+.tag .submit:hover{opacity:1}
 
 .optRow{position:absolute;height:34px;left:0;right:0;margin:8px 0;border-radius:6px;display:flex;align-items:center}
 .optBox{position:absolute;height:24px;border-radius:5px;border:1px solid #2a2a2a;background:#131313;z-index:1}

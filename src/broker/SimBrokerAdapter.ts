@@ -207,6 +207,9 @@ export class SimBrokerAdapter implements BrokerAdapter {
     return state;
   }
 
+  /** The simulator never stages orders, so there is nothing to transmit. */
+  async transmitOrder(_orderId: string): Promise<void> {}
+
   async cancelOrder(orderId: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 250 + Math.random() * 400));
     const existing = this.orders.get(orderId);

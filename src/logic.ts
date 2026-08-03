@@ -367,6 +367,15 @@ export const cancelOpenOrder = (id: string) => async (dispatch: any) => {
   }
 };
 
+/** Transmits a staged (Draft) order. Held orders have no submit path here. */
+export const transmitOpenOrder = (id: string) => async (dispatch: any) => {
+  try {
+    await getBroker().transmitOrder(id);
+  } catch (e) {
+    dispatch(toastSlice.actions.showToast('Submit failed: ' + (e instanceof Error ? e.message : String(e))));
+  }
+};
+
 // applies a broker orderUpdate event to the openOrders list
 export const applyOrderUpdate = (order: OrderState) => (dispatch: any, getState: any) => {
   const st = getState();
@@ -409,6 +418,7 @@ export const actions = {
   ...toastSlice.actions,
   commitProvisional,
   cancelOpenOrder,
+  transmitOpenOrder,
   confirmPendingLiveOrder,
   cancelPendingLiveOrder,
   applyOrderUpdate,

@@ -44,6 +44,10 @@ export class IpcBrokerClient implements BrokerAdapter {
     return this.bridge.placeOrder(req);
   }
 
+  transmitOrder(orderId: string): Promise<void> {
+    return this.bridge.transmitOrder(orderId);
+  }
+
   cancelOrder(orderId: string): Promise<void> {
     return this.bridge.cancelOrder(orderId);
   }

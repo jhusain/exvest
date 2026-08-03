@@ -84,6 +84,7 @@ ipcMain.handle('exvest:setUnderlying', (_e, symbol: string) => adapter.setUnderl
 ipcMain.on('exvest:subscribeMarketData', () => adapter.subscribeMarketData());
 ipcMain.on('exvest:unsubscribeMarketData', () => adapter.unsubscribeMarketData());
 ipcMain.handle('exvest:placeOrder', (_e, req) => adapter.placeOrder(req));
+ipcMain.handle('exvest:transmitOrder', (_e, orderId: string) => adapter.transmitOrder(orderId));
 ipcMain.handle('exvest:cancelOrder', (_e, orderId: string) => adapter.cancelOrder(orderId));
 ipcMain.handle('exvest:getAccountSummary', () => adapter.getAccountSummary());
 

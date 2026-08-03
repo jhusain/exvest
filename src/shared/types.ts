@@ -61,7 +61,14 @@ export interface AccountSummary {
 }
 
 export type OrderStatus =
+  /** Placed with transmit:false — sitting at the broker awaiting OUR submit. */
   | 'Draft'
+  /**
+   * Accepted by the broker but parked pending a manual confirmation only the
+   * broker's own UI can give (e.g. IB error 163, a precautionary price
+   * constraint). Distinct from Draft: the app cannot clear this one.
+   */
+  | 'Held'
   | 'PendingSubmit'
   | 'PreSubmitted'
   | 'Submitted'
@@ -138,6 +145,12 @@ export interface BrokerAdapter {
   subscribeMarketData(): void;
   unsubscribeMarketData(): void;
   placeOrder(req: PlaceOrderRequest): Promise<OrderState>;
+  /**
+   * Transmits an order previously placed with transmit:false (status Draft).
+   * Only meaningful in ib-live-confirm; a no-op elsewhere. Cannot clear a
+   * Held order — that confirmation lives in the broker's own UI.
+   */
+  transmitOrder(orderId: string): Promise<void>;
   cancelOrder(orderId: string): Promise<void>;
   getAccountSummary(): Promise<AccountSummary>;
   on<E extends BrokerEvent>(event: E, fn: (payload: BrokerEventMap[E]) => void): () => void;

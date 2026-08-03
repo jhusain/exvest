@@ -18,6 +18,7 @@ const bridge: ExvestBridge = {
   subscribeMarketData: () => ipcRenderer.send('exvest:subscribeMarketData'),
   unsubscribeMarketData: () => ipcRenderer.send('exvest:unsubscribeMarketData'),
   placeOrder: (req) => ipcRenderer.invoke('exvest:placeOrder', req),
+  transmitOrder: (orderId) => ipcRenderer.invoke('exvest:transmitOrder', orderId),
   cancelOrder: (orderId) => ipcRenderer.invoke('exvest:cancelOrder', orderId),
   getAccountSummary: () => ipcRenderer.invoke('exvest:getAccountSummary'),
   on(event, fn) {

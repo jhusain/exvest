@@ -236,6 +236,12 @@ export class IbBrokerAdapter implements BrokerAdapter {
   private accountId: string | null = null;
   private pendingOrders = new Map<number, { conId: number; optionId: string; qty: number; limitPrice: number; resolve: (s: OrderState) => void; reject: (e: Error) => void }>();
   private orderIdByReqOrderId = new Map<number, string>();
+  /**
+   * Orders placed with transmit:false, keyed by orderId. Re-placing the same
+   * orderId with transmit:true is how IB transmits a staged order, so the
+   * original contract and terms have to be kept around.
+   */
+  private draftOrders = new Map<number, { contract: Contract; order: IBOrder; req: PlaceOrderRequest }>();
 
   constructor(private opts: IbBrokerAdapterOptions) {
     this.ib = new IBApi({ host: opts.host ?? '127.0.0.1', port: opts.port, clientId: opts.clientId ?? 0 });
@@ -306,8 +312,30 @@ export class IbBrokerAdapter implements BrokerAdapter {
 
       // Advisory: surface it, but leave the order pending so the openOrder /
       // orderStatus events resolve it normally.
-      if (pending && ORDER_ADVISORY_CODES.includes(errCode)) {
+      if (ORDER_ADVISORY_CODES.includes(errCode) && (pending || this.orderIdByReqOrderId.has(reqId))) {
         log.warn(`order ${reqId} advisory ${errCode}: ${error?.message ?? ''}`);
+
+        // 163 means the broker is holding the order for a confirmation only
+        // its own UI can give. Reflect that in the order's state so the tag
+        // shows it needs attention — and, crucially, offers no submit action,
+        // since the app cannot clear this one.
+        if (errCode === 163) {
+          this.emitter.emit('orderUpdate', {
+            id: String(reqId),
+            conId: pending?.conId ?? 0,
+            optionId: pending?.optionId ?? this.orderIdByReqOrderId.get(reqId) ?? '',
+            action: 'SELL',
+            qty: pending?.qty ?? 0,
+            limitPrice: pending?.limitPrice ?? 0,
+            status: 'Held',
+            filled: 0,
+            remaining: pending?.qty ?? 0,
+            avgFillPrice: null,
+            transmitted: true,
+            message: error?.message
+          });
+        }
+
         this.emitter.emit('error', {
           code: errCode,
           message:
@@ -874,10 +902,14 @@ export class IbBrokerAdapter implements BrokerAdapter {
       this.ib.reqIds();
     });
 
+    const transmit = this.opts.mode !== 'ib-live-confirm';
     const contract: Contract = { conId: req.conId, secType: 'OPT' as any, exchange: 'SMART', currency: 'USD' };
-    const order: IBOrder = new LimitOrder(OrderAction.SELL, req.limitPrice, req.qty, this.opts.mode !== 'ib-live-confirm');
+    const order: IBOrder = new LimitOrder(OrderAction.SELL, req.limitPrice, req.qty, transmit);
 
     this.orderIdByReqOrderId.set(orderId, req.optionId);
+    // Staged orders are re-placed under the same orderId to transmit them, so
+    // keep the contract and terms.
+    if (!transmit) this.draftOrders.set(orderId, { contract, order, req });
 
     return new Promise<OrderState>((resolve, reject) => {
       this.pendingOrders.set(orderId, { conId: req.conId, optionId: req.optionId, qty: req.qty, limitPrice: req.limitPrice, resolve, reject });
@@ -893,24 +925,64 @@ export class IbBrokerAdapter implements BrokerAdapter {
           action: 'SELL',
           qty: req.qty,
           limitPrice: req.limitPrice,
-          status: mapOrderStatus(orderState.status),
+          // An untransmitted order is Draft regardless of what IB calls it:
+          // it is waiting on us, and the UI offers a submit action for it.
+          status: transmit ? mapOrderStatus(orderState.status) : 'Draft',
           filled: 0,
           remaining: req.qty,
           avgFillPrice: null,
-          transmitted: this.opts.mode !== 'ib-live-confirm'
+          transmitted: transmit
         };
         pending?.resolve(state);
         this.emitter.emit('orderUpdate', state);
       };
       this.ib.on(EventName.openOrder, onOpenOrder);
       log.info(
-        `placing SELL ${req.qty} @ ${req.limitPrice} on conId ${req.conId} (orderId ${orderId}, transmit ${this.opts.mode !== 'ib-live-confirm'})`
+        `placing SELL ${req.qty} @ ${req.limitPrice} on conId ${req.conId} (orderId ${orderId}, transmit ${transmit})`
       );
       this.ib.placeOrder(orderId, contract, order);
     });
   }
 
+  /**
+   * Transmits a staged (transmit:false) order by re-placing it under the same
+   * orderId with transmit:true — IB's documented way to send a staged order.
+   * Does nothing for an order that was never staged; a Held order in
+   * particular cannot be cleared from here.
+   */
+  async transmitOrder(orderId: string): Promise<void> {
+    const id = Number(orderId);
+    const draft = this.draftOrders.get(id);
+    if (!draft) {
+      log.warn(`transmitOrder(${orderId}): no staged order with that id — ignoring`);
+      return;
+    }
+    if (this.liveDataUnsafeReason) {
+      throw new Error(
+        `Refusing to transmit a real-money order without real-time market data: ${this.liveDataUnsafeReason}`
+      );
+    }
+    this.draftOrders.delete(id);
+    const order: IBOrder = { ...draft.order, transmit: true };
+    log.info(`transmitting staged order ${id} (SELL ${draft.req.qty} @ ${draft.req.limitPrice})`);
+    this.ib.placeOrder(id, draft.contract, order);
+    this.emitter.emit('orderUpdate', {
+      id: orderId,
+      conId: draft.req.conId,
+      optionId: draft.req.optionId,
+      action: 'SELL',
+      qty: draft.req.qty,
+      limitPrice: draft.req.limitPrice,
+      status: 'PendingSubmit',
+      filled: 0,
+      remaining: draft.req.qty,
+      avgFillPrice: null,
+      transmitted: true
+    });
+  }
+
   async cancelOrder(orderId: string): Promise<void> {
+    this.draftOrders.delete(Number(orderId));
     log.info(`cancelling order ${orderId}`);
     this.ib.cancelOrder(Number(orderId));
   }
